@@ -1,0 +1,37 @@
+#
+# Copyright (c) 2022 Level Home. All rights reserved.
+#
+
+include: base.yaml
+
+description: A very specific driver that triggers a GPIO output based on an COMP event
+
+compatible: "level,nrf-compgpioteppi"
+
+properties:
+  comp-event:
+    type: int
+    required: true
+    description: |
+      The triggering event. Can be compare READY, DOWN, UP, DOWN, CROSS
+
+  comp-vref:
+    type: int
+    required: true
+    description: |
+      The voltage reference. 1.2V, 1.8V, or 2.4V
+
+  gpio-pin:
+    type: phandle
+    required: true
+    description: GPIO which change state upon event.
+
+  gpiote-task:
+    type: int
+    required: true
+    description: The task to run upon the event. Can be LOW, HIGH, or TOGGLE
+
+  adcchan:
+    type: phandle
+    required: true
+    description: The adc channel used for the compare

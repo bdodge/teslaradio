@@ -1,0 +1,43 @@
+#
+# Copyright (c) 2021 Level Home. All rights reserved.
+#
+
+description: AM08x RTC driver
+
+compatible: "ambiq,am08x"
+
+include: "i2c-device.yaml"
+
+properties:
+    label:
+        type: string
+
+    int-gpios:
+        type: phandle-array
+        required: false
+        description: |
+          IRQ interrupt output pin
+
+    exti-gpios:
+        type: phandle-array
+        required: false
+        description: |
+          External interrupt pin
+
+    wdi-gpios:
+        type: phandle-array
+        required: false
+        description: |
+          Watchdog interrupt pin
+
+    status:
+      required: true
+      type: string
+      description: indicates the operational status of a device
+      enum:
+         - "ok"
+         - "okay"
+         - "disabled"
+         - "reserved"
+         - "fail"
+         - "fail-sss"

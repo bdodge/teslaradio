@@ -1,0 +1,36 @@
+#
+# Copyright (c) 2024 Level Home. All rights reserved.
+#
+
+description: TAS2505 codec driver
+
+compatible: "ti,tas2505"
+
+include: i2c-device.yaml
+
+properties:
+  i2s-channel:
+      type: phandle
+      required: true
+      description: |
+          I2S bus
+
+  reset-gpios:
+      type: phandle-array
+      required: false
+
+  label:
+      type: string
+      description: Human readable string describing the device (used by Zephyr for API name)
+
+  status:
+      required: true
+      type: string
+      description: indicates the operational status of a device
+      enum:
+         - "ok"
+         - "okay"
+         - "disabled"
+         - "reserved"
+         - "fail"
+         - "fail-sss"

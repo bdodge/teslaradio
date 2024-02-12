@@ -1,0 +1,56 @@
+#
+# Copyright (c) 2021 Level Home. All rights reserved.
+# Author: Julian Brown <julian@intercreate.io>
+#
+
+description: PID-based motor controller device
+
+compatible: "level,motor-controller"
+
+properties:
+  motor-driver:
+    type: phandle
+    required: true
+    description: |
+      Motor driver device used to control motor in question
+
+  position-sensor:
+    type: phandle
+    required: true
+    description: |
+      Position sensor used to determine motor position
+
+  k-p:
+    type: int
+    required: true
+    description: |
+      Proportional gain of PID system
+
+  k-i:
+    type: int
+    required: true
+    description: |
+      Integral gain of PID system
+
+  k-d:
+    type: int
+    required: true
+    description: |
+      Derivative gain of PID system
+
+  label:
+    type: string
+    required: true
+    description: Human readable string describing the device (used by Zephyr for API name)
+
+  status:
+    type: string
+    required: true
+    description: indicates the operational status of a device
+    enum:
+      - "ok"
+      - "okay"
+      - "disabled"
+      - "reserved"
+      - "fail"
+      - "fail-sss"

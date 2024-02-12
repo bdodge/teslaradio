@@ -1,0 +1,19 @@
+#
+# Copyright (c) 2021 Intimuse. All rights reserved.
+# Author: Rob Helvestine <rob@intercreate.io>
+#
+
+description: Generic GPIO configuration for multiple gpios
+
+compatible: "level,gpios"
+
+child-binding:
+  description: Child definition
+  properties:
+     gpios:
+        type: phandle-array
+        required: true
+     label:
+        required: true
+        type: string
+        description: Human readable string describing the device (used by Zephyr for API name)

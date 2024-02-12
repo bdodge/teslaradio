@@ -1,0 +1,23 @@
+
+description: Generic GPIO configuration
+
+compatible: "level,gpio-in"
+
+properties:
+   gpios:
+      type: phandle-array
+      required: true
+   label:
+      required: true
+      type: string
+      description: Human readable string describing the device (used by Zephyr for API name)
+   status:
+      required: true
+      type: string
+      description: indicates the operational status of a device
+      enum:
+         - "okay"
+         - "disabled"
+         - "reserved"
+         - "fail"
+         - "fail-sss"

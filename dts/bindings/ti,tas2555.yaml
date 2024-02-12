@@ -1,0 +1,41 @@
+#
+# Copyright (c) 2021 Level Home. All rights reserved.
+# Author: Julian Brown <julian@intercreate.io>
+#
+
+description: TAS2555 codec driver
+
+compatible: "ti,tas2555"
+
+include: i2c-device.yaml
+
+properties:
+  i2s-channel:
+      type: phandle
+      required: true
+      description: |
+          I2S bus
+
+  reset-gpio:
+      type: phandle
+      required: false
+
+  power-rail:
+      type: phandle
+      required: true
+
+  label:
+      type: string
+      description: Human readable string describing the device (used by Zephyr for API name)
+
+  status:
+      required: true
+      type: string
+      description: indicates the operational status of a device
+      enum:
+         - "ok"
+         - "okay"
+         - "disabled"
+         - "reserved"
+         - "fail"
+         - "fail-sss"

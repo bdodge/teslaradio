@@ -1,0 +1,56 @@
+#
+# Copyright (c) 2021 Level Home. All rights reserved.
+# Author: Julian Brown <julian@intercreate.io>
+#
+
+description: Board ID device for identifying HW revision
+
+compatible: "level,board-id"
+
+properties:
+  id0-pin:
+    type: phandle
+    required: true
+    description: |
+      Pin associated with board ID 0 resistors
+
+  id1-pin:
+    type: phandle
+    required: true
+    description: |
+      Pin associated with board ID 1 resistors
+
+  id2-pin:
+    type: phandle
+    required: true
+    description: |
+      Pin associated with board ID 2 resistors
+
+  id3-pin:
+    type: phandle
+    required: true
+    description: |
+      Pin associated with board ID 3 resistors
+
+  id4-pin:
+    type: phandle
+    required: true
+    description: |
+      Pin associated with board ID 4 resistors
+
+  label:
+    type: string
+    required: true
+    description: Human readable string describing the device (used by Zephyr for API name)
+
+  status:
+    type: string
+    required: true
+    description: indicates the operational status of a device
+    enum:
+      - "ok"
+      - "okay"
+      - "disabled"
+      - "reserved"
+      - "fail"
+      - "fail-sss"

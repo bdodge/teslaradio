@@ -1,0 +1,42 @@
+#
+# Copyright (c) 2023 Level Home. All rights reserved.
+#
+
+include: sensor-device.yaml
+
+description: |
+    Memsic MMC5603 magnetometer accessed through I2C bus
+
+compatible: "memsic,mmc5603"
+
+include: ["i2c-device.yaml"]
+
+properties:
+  auto-set-reset:
+    type: boolean
+    description: |
+      Set to enable S/R mode to cancel internal magnetization.
+      See data sheet. Disabled as default.
+
+  sample-freq:
+    type: int
+    description: |
+      Take samples continuously at this rate (Hz) from 1 to 50. 0 is default
+      and means single-shot mode only
+
+  bandwidth:
+    type: int
+    description: |
+      Bandwidth setting 0-3. See data sheet. default is 0
+
+  use_20_bits:
+    type: boolean
+    description: |
+      If true, Get 20 bits (not 16) of measurement data (experimental) default false
+
+  saturation_interval:
+    type: int
+    description: |
+      The number of samples taken between checking for saturation. default of 0 means
+      never check for saturation
+

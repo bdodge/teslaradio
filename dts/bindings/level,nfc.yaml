@@ -1,0 +1,24 @@
+#
+# Copyright (c) 2023 Level Home. All rights reserved.
+#
+
+description: NFC SPI3 device
+
+compatible: "level,nfc"
+
+properties:
+    label:
+        type: string
+        required: true
+    sck_gpios:
+        type: phandle-array
+        required: true
+    miso_gpios:
+        type: phandle-array
+        required: true
+    mosi_gpios:
+        type: phandle-array
+        required: true
+    ss_gpios:
+        type: phandle-array
+        required: true

@@ -1,0 +1,32 @@
+description: LIS2DW12 accel driver
+
+compatible: "st,lis2dw12-level"
+
+include: i2c-device.yaml
+
+properties:
+  irq-pin:
+    type: phandle
+    required: false
+    description: |
+      DRDY pin
+
+      This pin defaults to active high when produced by the sensor.
+      The property value should ensure the flags properly describe
+      the signal that is presented to the driver.
+
+  label:
+      type: string
+      description: Human readable string describing the device (used by Zephyr for API name)
+
+  status:
+      required: true
+      type: string
+      description: indicates the operational status of a device
+      enum:
+         - "ok"
+         - "okay"
+         - "disabled"
+         - "reserved"
+         - "fail"
+         - "fail-sss"

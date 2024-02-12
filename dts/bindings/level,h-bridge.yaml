@@ -1,0 +1,49 @@
+#
+# Copyright (c) 2021 Level Home. All rights reserved.
+# Author: Julian Brown <julian@intercreate.io>
+#
+
+description: Generic H-bridge driver
+
+compatible: "level,h-bridge"
+
+properties:
+  enable-gpiopin:
+    type: phandle
+    required: false
+    description: |
+      GPIO pin used to enable/disable H-bridge
+
+  pwm-channel:
+    type: phandle
+    required: true
+    description: |
+      PWM device object used to drive motor
+
+  forward-pin:
+    type: int
+    required: true
+    description: |
+      Pin number used for forward channel
+
+  reverse-pin:
+    type: int
+    required: false
+    description: |
+      Pin number used for reverse channel
+      
+  label:
+    type: string
+    required: true
+    description: Human readable string describing the device (used by Zephyr for API name)
+
+  status:
+    required: true
+    type: string
+    description: indicates the operational status of a device
+    enum:
+      - "okay"
+      - "disabled"
+      - "reserved"
+      - "fail"
+      - "fail-sss"

@@ -1,0 +1,61 @@
+#
+# Copyright (c) 2023 Level Home. All rights reserved.
+#
+
+description: ADC with voltage divider + enable / disable
+
+compatible: "level,adc-ratio"
+
+properties:
+  enable-rail:
+    type: phandle
+    required: false
+    description: |
+      Power rail needed to support reading, activated by adc driver
+
+  active-when-gpio:
+    type: phandle
+    required: false
+    description: |
+      Reading is only valid if this gpio is activated by some other means (not adc driver)
+
+  io-channels:
+    type: phandle-array
+    required: true
+    description: |
+      ADC channel index
+
+  full-ohms:
+    type: int
+    required: true
+    description: |
+      Resistance of the full path through the voltage divider (top + bottom resistor).
+
+  output-ohms:
+    type: int
+    required: true
+    description: |
+      Resistance of the lower leg of the voltage divider (bottom resistor)
+
+  sample-period-ms:
+    type: int
+    required: false
+    description: |
+      Software based timer to continuously monitor the ADC
+
+  label:
+    type: string
+    required: true
+    description: Human readable string describing the device (used by Zephyr for API name)
+
+  status:
+    type: string
+    required: true
+    description: indicates the operational status of a device
+    enum:
+      - "ok"
+      - "okay"
+      - "disabled"
+      - "reserved"
+      - "fail"
+      - "fail-sss"
