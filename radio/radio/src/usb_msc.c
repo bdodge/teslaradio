@@ -33,6 +33,7 @@
  * Driver for USB Mass Storage device class driver
  */
 
+#include "usb_msc.h"
 #include <zephyr/init.h>
 #include <errno.h>
 #include <string.h>

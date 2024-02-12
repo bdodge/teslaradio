@@ -29,7 +29,7 @@ endif()
 
 set(APPLICATION_SRCS
   ${APPLICATION_DIR}/main.c
-  ${APPLICATION_DIR}/msc.c
+  ${APPLICATION_DIR}/usb_msc.c
   ${APPLICATION_DIR}/vfs.c
   ${APPLICATION_DIR}/vdisk.c
 )

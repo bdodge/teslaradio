@@ -4,12 +4,11 @@
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(main, LOG_LEVEL_INF);
 
-#if CONFIG_OPTION_AUDIO
-    #include "tones.h"
-#endif
 #if CONFIG_BT
-    #include "tr_ble.h"
+#include "tr_ble.h"
 #endif
+
+#include "vfs.h"
 
 int main(void)
 {
@@ -20,43 +19,41 @@ int main(void)
     uint32_t delay = 2000;
     uint32_t min_delay;
 
-    vdisk_init();
-
     do // try
     {
-#if CONFIG_OPTION_AUDIO
-        ret = ToneInit(g_tone_registry, g_tone_registry_count);
+        ret = vfs_init();
+
         if (ret)
         {
             break;
         }
-#endif
+
 #if CONFIG_BT
         ret = BLEinit(CONFIG_BT_DEVICE_NAME);
+
         if (ret)
         {
             break;
         }
+
 #endif
     }
-    while(0); // catcj
-#if CONFIG_OPTION_AUDIO
-    TonePlayToneAtVolume("boot", 50);
-#endif
-    // Run the application
-    //
+    while (0); // catch
+
     while (true)
     {
         min_delay = delay;
         delay = 2000;
 
-        #if CONFIG_BT
+#if CONFIG_BT
         ret = BLEslice(&delay);
+
         if (delay < min_delay)
         {
             min_delay = delay;
         }
-        #endif
+
+#endif
         k_msleep(min_delay);
     }
 
@@ -64,6 +61,7 @@ int main(void)
     {
         k_sleep(K_MSEC(3000));
     }
+
     return ret;
 }
 
