@@ -1,32 +1,20 @@
-/*
- * Copyright (c) 2016 Intel Corporation.
- * Copyright (c) 2021, Nordic Semiconductor ASA
- * Copyright (c) 2024 Brian Dodge
- *
- * SPDX-License-Identifier: Apache-2.0
- */
 
 #include "vdisk.h"
-#include <string.h>
 #include <zephyr/types.h>
 #include <zephyr/drivers/disk.h>
-#include <errno.h>
 #include <zephyr/init.h>
 #include <zephyr/device.h>
 #include <zephyr/logging/log.h>
+#include <string.h>
+#include <errno.h>
 
 LOG_MODULE_REGISTER(vdisk, CONFIG_DISK_LOG_LEVEL);
 
-#define RAMDISK_SECTOR_SIZE 512
-#define RAMDISK_VOLUME_SIZE (CONFIG_DISK_VRAM_VOLUME_SIZE * 1024)
-#define RAMDISK_SECTOR_COUNT (RAMDISK_VOLUME_SIZE / RAMDISK_SECTOR_SIZE)
+#include "fs_sects.c"
 
-static uint8_t ramdisk_buf[RAMDISK_VOLUME_SIZE];
+//#define SECTION_MAX (sizeof(section_sectors)/sizeof(struct sect_desc))
 
-static void *lba_to_address(uint32_t lba)
-{
-    return &ramdisk_buf[lba * RAMDISK_SECTOR_SIZE];
-}
+#define VFAT_SECTOR_COUNT ((uint32_t)(VFAT_VOLUME_SIZE / VFAT_SECTOR_SIZE))
 
 static int disk_ram_access_status(struct disk_info *disk)
 {
@@ -42,36 +30,124 @@ static int disk_ram_access_read(struct disk_info *disk, uint8_t *buff,
                                 uint32_t sector, uint32_t count)
 {
     uint32_t last_sector = sector + count;
+    uint32_t remain;
+    uint32_t section;
 
-    if (last_sector < sector || last_sector > RAMDISK_SECTOR_COUNT)
+    if (last_sector < sector || last_sector > VFAT_SECTOR_COUNT)
     {
-        LOG_ERR("Sector %" PRIu32 " is outside the range %u",
-                last_sector, RAMDISK_SECTOR_COUNT);
+        LOG_ERR("Sector %u is outside the range %u",
+                last_sector, VFAT_SECTOR_COUNT);
         return -EIO;
+    }
+
+    // search through section description to get section the start sector is in
+    //
+    for (section = 0; section < SECTION_MAX; section++)
+    {
+        if (sector >= section_sectors[section].start_sector && sector < (section_sectors[section].start_sector + section_sectors[section].count))
+        {
+            break;
+        }
+    }
+
+    if (section >= SECTION_MAX)
+    {
+        LOG_ERR("sector %u isn't in our fs", sector);
+        memset(buff, 0, count * VFAT_SECTOR_SIZE);
+        return 0;
     }
 
     //LOG_INF("read %u %d", sector, count);
 
-    memcpy(buff, lba_to_address(sector), count * RAMDISK_SECTOR_SIZE);
+    sector -= section_sectors[section].start_sector;
+    remain = section_sectors[section].count - sector;
 
+    if (section == SECTION_FAT)
+    {
+        // synthesize FAT sectors
+        while (count > 0 && remain > 0)
+        {
+            uint32_t *fatptr;
+            uint32_t fatdex;
+            uint32_t cluster;
+
+            fatptr = (uint32_t *)buff;
+
+            cluster = 1 + sector * VFAT_SECTOR_SIZE / 4;
+
+            if (sector <= 512)
+            {
+                for (fatdex = 0; fatdex < VFAT_SECTOR_SIZE / 4; fatdex++)
+                {
+                    fatptr[fatdex] = cluster++;
+                }
+
+                if (sector == 0)
+                {
+                    // first three fat entries fixed/reserved
+                    fatptr[0] = 0xFFFFFFF8;
+                    fatptr[1] = 0xFFFFFFFF;
+                    fatptr[2] = 0x0FFFFFFF;
+                }
+                else if (sector == 512) /* 2mb file fat ends at sector 512 */
+                {
+                    // lots of EOC after last 2 fat entries of file
+                    for (fatdex = 2; fatdex < 18; fatdex++)
+                    {
+                        fatptr[fatdex] = 0x0FFFFFFF;
+                    }
+                }
+            }
+            else
+            {
+                memset(fatptr, 0, VFAT_SECTOR_SIZE);
+            }
+
+            fatptr += VFAT_SECTOR_SIZE / 4;
+            sector++;
+            count--;
+            remain--;
+        }
+    }
+    else
+    {
+        while (count > 0 && remain > 0)
+        {
+            if (section_sectors[section].sectors)
+            {
+                const uint8_t *psect = section_sectors[section].sectors[sector];
+
+                if (psect)
+                {
+                    memcpy(buff, psect, VFAT_SECTOR_SIZE);
+                }
+                else
+                {
+                    memset(buff, 0, VFAT_SECTOR_SIZE);
+                }
+            }
+            else
+            {
+                memset(buff, 0, VFAT_SECTOR_SIZE);
+            }
+
+            sector++;
+            count--;
+            remain--;
+        }
+    }
+
+    if (count > 0)
+    {
+        LOG_ERR("sector read crossed section boundary at %u", sector);
+    }
     return 0;
 }
 
 static int disk_ram_access_write(struct disk_info *disk, const uint8_t *buff,
                                  uint32_t sector, uint32_t count)
 {
-    uint32_t last_sector = sector + count;
-
-    if (last_sector < sector || last_sector > RAMDISK_SECTOR_COUNT)
-    {
-        LOG_ERR("Sector %" PRIu32 " is outside the range %u",
-                last_sector, RAMDISK_SECTOR_COUNT);
-        return -EIO;
-    }
-
-    memcpy(lba_to_address(sector), buff, count * RAMDISK_SECTOR_SIZE);
-
-    return 0;
+    return -EIO;
 }
 
 static int disk_ram_access_ioctl(struct disk_info *disk, uint8_t cmd, void *buff)
@@ -82,11 +158,11 @@ static int disk_ram_access_ioctl(struct disk_info *disk, uint8_t cmd, void *buff
         break;
 
     case DISK_IOCTL_GET_SECTOR_COUNT:
-        *(uint32_t *)buff = RAMDISK_SECTOR_COUNT;
+        *(uint32_t *)buff = VFAT_VOLUME_SIZE / VFAT_SECTOR_SIZE;
         break;
 
     case DISK_IOCTL_GET_SECTOR_SIZE:
-        *(uint32_t *)buff = RAMDISK_SECTOR_SIZE;
+        *(uint32_t *)buff = VFAT_SECTOR_SIZE;
         break;
 
     case DISK_IOCTL_GET_ERASE_BLOCK_SZ:
@@ -115,8 +191,157 @@ static struct disk_info ram_disk =
     .ops = &ram_disk_ops,
 };
 
+#define AT_READ_ONLY    0x01
+#define AT_HIDDEN       0x02
+#define AT_SYSTEM       0x04
+#define AT_VOLUME_ID    0x08
+#define AT_DIRECTORY    0x10
+#define AT_ARCHIVE      0x20
+#define AT_LFN          (AT_READ_ONLY|AT_HIDDEN|AT_SYSTEM|AT_VOLUME_ID) /* 0x0F */
+
+#define AT_OFF          11
+#define CLUST_HIGH      20
+#define CLUST_LOW       26
+#define SIZE_OFF        28
+
+void vdisk_setup_dir(void)
+{
+    char lfnbuf[VFAT_MAX_FILENAME + 14];
+    uint8_t entry[32];
+    uint32_t ent_off = 0;
+    uint32_t slen = section_sectors[SECTION_ROOTDIR].count * VFAT_SECTOR_SIZE;
+    uint8_t attr;
+    uint32_t lfndex = 0;
+    uint32_t filenum = 0;
+
+    uint32_t first_cluster;
+    uint32_t first_size;
+
+    while (ent_off < slen && filenum < VFAT_ROOT_DIR_COUNT)
+    {
+        // read dir entry
+        memcpy(entry, section_sectors[SECTION_ROOTDIR].sectors[0] + ent_off, 32);
+
+        attr = entry[AT_OFF];
+        if (attr == AT_LFN)
+        {
+            bool is_last = (entry[0] & 0x40) != 0;
+            uint8_t order = (entry[0] & 0x0F);
+
+            if (order < 1)
+            {
+                LOG_ERR("fname order issue");
+                order = 1;
+            }
+
+            if (is_last)
+            {
+                memset(lfnbuf, 0, sizeof(lfnbuf));
+            }
+
+            lfndex = (order - 1) * 13;
+
+            if ((lfndex + 13) >= sizeof(lfnbuf))
+            {
+                LOG_ERR("fname overflow");
+            }
+            else
+            {
+                int sdex = lfndex;
+
+                lfnbuf[lfndex++] = entry[1];
+                lfnbuf[lfndex++] = entry[3];
+                lfnbuf[lfndex++] = entry[5];
+                lfnbuf[lfndex++] = entry[7];
+                lfnbuf[lfndex++] = entry[9];
+                lfnbuf[lfndex++] = entry[14];
+                lfnbuf[lfndex++] = entry[16];
+                lfnbuf[lfndex++] = entry[18];
+                lfnbuf[lfndex++] = entry[20];
+                lfnbuf[lfndex++] = entry[22];
+                lfnbuf[lfndex++] = entry[24];
+                lfnbuf[lfndex++] = entry[28];
+                lfnbuf[lfndex++] = entry[30];
+
+                for (int x = sdex; x < lfndex; x+= 2)
+                {
+                    if (lfnbuf[x] == 0xFF)
+                    {
+                        if (lfnbuf[x + 1] == 0xFF)
+                        {
+                            lfnbuf[x] = lfnbuf[x + 1] = 0;
+                        }
+                    }
+                }
+            }
+        }
+        else
+        {
+            uint32_t cluster;
+            uint32_t size;
+            char sfn[16];
+
+            for (int i = 0; i < 8; i++)
+            {
+                sfn[i] = entry[i];
+            }
+            sfn[8] = '.';
+            for (int i = 0; i < 3; i++)
+            {
+                sfn[i + 9] = entry[i + 8];
+            }
+            sfn[12] = '\0';
+            lfndex = 0;
+
+            cluster += (uint32_t)entry[CLUST_LOW];
+            cluster += (uint32_t)entry[CLUST_LOW + 1] << 8;
+            cluster  = (uint32_t)entry[CLUST_HIGH] << 16;
+            cluster += (uint32_t)entry[CLUST_HIGH + 1] << 24;
+
+            size  = (uint32_t)entry[SIZE_OFF];
+            size += (uint32_t)entry[SIZE_OFF + 1] << 8;
+            size += (uint32_t)entry[SIZE_OFF + 2] << 16;
+            size += (uint32_t)entry[SIZE_OFF + 3] << 24;
+
+            LOG_INF("File %d of %08X at %08X =%s= =%s=", filenum, size, cluster, sfn, lfnbuf);
+
+            if (filenum == 0)
+            {
+                first_cluster = cluster;
+                first_size = size;
+            }
+            else
+            {
+                if (1)
+                {
+                    entry[CLUST_LOW] = first_cluster & 0xFF;
+                    entry[CLUST_LOW + 1] = (first_cluster >> 8) & 0xFF;
+                    entry[CLUST_HIGH] = (first_cluster >> 16) & 0xFF;
+                    entry[CLUST_HIGH] = (first_cluster >> 24) & 0xFF;
+                }
+                if (1)
+                {
+                    entry[SIZE_OFF] = size & 0xFF;
+                    entry[SIZE_OFF + 1] = (first_size >> 8) & 0xFF;
+                    entry[SIZE_OFF + 2] = (first_size >> 16) & 0xFF;
+                    entry[SIZE_OFF + 3] = (first_size >> 24) & 0xFF;
+                }
+
+                // replace dir entry
+                memcpy((uint8_t*)section_sectors[SECTION_ROOTDIR].sectors[0] + ent_off, entry, 32);
+            }
+
+            filenum++;
+        }
+
+        ent_off += 32;
+    }
+}
+
 int vdisk_init(void)
 {
+    vdisk_setup_dir();
+
     return disk_access_register(&ram_disk);
 }
 
