@@ -9,6 +9,10 @@ menuconfig USB_MASS_VSTORAGE
 
 if USB_MASS_VSTORAGE
 
+config MASS_STORAGE_DISK_NAME
+	string "name of disk"
+	default "tradio"
+
 config MASS_STORAGE_INQ_VENDOR_ID
 	string "T10 assigned vendor ID for inquiry (must be 8 characters)"
 	default "ZEPHYR  "
@@ -44,35 +48,10 @@ config MASS_STORAGE_STACK_SIZE
 	help
 	  Stack size for mass storage disk operations thread
 
-config APP_WIPE_STORAGE
-	bool "Option to clear the flash area before mounting"
-	help
-	  Use this to force an existing file system to be created.
-
 config APP_MSC_STORAGE_VRAM
 	bool "Use virtual RAM disk and FAT file system"
 	imply DISK_DRIVERS
-	imply FILE_SYSTEM
-	imply FAT_FILESYSTEM_ELM
 
-config DISK_VRAM_VOLUME_SIZE
-	int "VRAM Disk size in kilobytes"
-	default 96
-	help
-	  Size of the VRAM Disk.
-
-config DISK_VRAM_VOLUME_NAME
-	string "VRAM Disk mount point or drive name"
-	default "NAND"
-	help
-	  Disk name as per file system naming guidelines.
-
-config MASS_STORAGE_DISK_NAME
-	default "NAND" if USB_MASS_VSTORAGE
-
-module = USB_MASS_VSTORAGE
-module-str = usb mass vstorage
-source "subsys/logging/Kconfig.template.log_config"
 endif
 
 source "Kconfig.zephyr"

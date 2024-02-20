@@ -14,17 +14,12 @@
 #include <zephyr/usb/usb_device.h>
 #include <zephyr/usb/usbd.h>
 #include <zephyr/usb/class/usbd_msc.h>
-#include <zephyr/fs/fs.h>
 #include <stdio.h>
 
 LOG_MODULE_REGISTER(vfs);
 
-#include <ff.h>
-
 #define STORAGE_PARTITION       storage_partition
 #define STORAGE_PARTITION_ID    FIXED_PARTITION_ID(STORAGE_PARTITION)
-
-static struct fs_mount_t fs_mnt;
 
 #if defined(CONFIG_USB_DEVICE_STACK_NEXT)
 USBD_CONFIGURATION_DEFINE(config_1,

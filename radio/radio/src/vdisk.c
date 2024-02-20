@@ -16,6 +16,18 @@ LOG_MODULE_REGISTER(vdisk, CONFIG_DISK_LOG_LEVEL);
 
 #define VFAT_SECTOR_COUNT ((uint32_t)(VFAT_VOLUME_SIZE / VFAT_SECTOR_SIZE))
 
+#include "taunt.h"
+
+static uint8_t s_wav_header[] = {
+  0x52, 0x49, 0x46, 0x46, 0x8c, 0x64, 0x01, 0x00, 0x57, 0x41, 0x56, 0x45,
+  0x66, 0x6d, 0x74, 0x20, 0x10, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00,
+  0xf1, 0x56, 0x00, 0x00, 0xf1, 0x56, 0x00, 0x00, 0x01, 0x00, 0x08, 0x00,
+  0x64, 0x61, 0x74, 0x61, 0x00, 0x00, 0x00, 0x80
+};
+
+#define WAV_HEADER_SIZE (sizeof(s_wav_header))
+
+
 static int disk_ram_access_status(struct disk_info *disk)
 {
     return DISK_STATUS_OK;
@@ -109,6 +121,62 @@ static int disk_ram_access_read(struct disk_info *disk, uint8_t *buff,
             remain--;
         }
     }
+    else if (section == SECTION_DATA)
+    {
+        uint32_t *src_ptr;
+        uint32_t *dst_ptr;
+        int srcdex;
+        int dstdex;
+        int copy_cnt;
+
+        dst_ptr = (uint32_t *)buff;
+        dstdex = 0;
+
+        while (count > 0 && remain > 0)
+        {
+            // synthesize data
+            if (sector == 0)
+            {
+                int hdrdex = 0;
+
+                src_ptr = (uint32_t *)s_wav_header;
+
+                // prepend wave header
+                while (dstdex < WAV_HEADER_SIZE / 4)
+                {
+                    dst_ptr[dstdex++] = src_ptr[hdrdex++];
+                }
+
+                srcdex = 0;
+                copy_cnt = VFAT_SECTOR_SIZE - WAV_HEADER_SIZE;
+            }
+            else
+            {
+                srcdex = (sector * VFAT_SECTOR_SIZE - WAV_HEADER_SIZE) % taunt_wav_len;
+                copy_cnt = VFAT_SECTOR_SIZE;
+            }
+
+            src_ptr = (uint32_t *)taunt_wav;
+            srcdex /= 4;
+            copy_cnt /= 4;
+
+            while (copy_cnt > 0)
+            {
+                dst_ptr[dstdex++] = src_ptr[srcdex++];
+
+                if (srcdex >= taunt_wav_len / 4)
+                {
+                    srcdex = 0;
+                }
+
+                copy_cnt--;
+            }
+
+            sector++;
+            count--;
+            remain--;
+        }
+    }
     else
     {
         while (count > 0 && remain > 0)
@@ -187,7 +255,7 @@ static const struct disk_operations ram_disk_ops =
 
 static struct disk_info ram_disk =
 {
-    .name = CONFIG_DISK_VRAM_VOLUME_NAME,
+    .name = CONFIG_MASS_STORAGE_DISK_NAME,
     .ops = &ram_disk_ops,
 };
 
@@ -214,8 +282,8 @@ void vdisk_setup_dir(void)
     uint32_t lfndex = 0;
     uint32_t filenum = 0;
 
-    uint32_t first_cluster;
-    uint32_t first_size;
+    uint32_t first_cluster = 0;
+    uint32_t first_size = 0;
 
     while (ent_off < slen && filenum < VFAT_ROOT_DIR_COUNT)
     {
@@ -312,19 +380,23 @@ void vdisk_setup_dir(void)
             }
             else
             {
-                if (1)
+                if (1) // point all file's to the first files cluster chain (i.e. link)
                 {
                     entry[CLUST_LOW] = first_cluster & 0xFF;
                     entry[CLUST_LOW + 1] = (first_cluster >> 8) & 0xFF;
                     entry[CLUST_HIGH] = (first_cluster >> 16) & 0xFF;
                     entry[CLUST_HIGH] = (first_cluster >> 24) & 0xFF;
                 }
-                if (1)
+                if (1) // make it appear as same size as first files size
                 {
                     entry[SIZE_OFF] = size & 0xFF;
                     entry[SIZE_OFF + 1] = (first_size >> 8) & 0xFF;
                     entry[SIZE_OFF + 2] = (first_size >> 16) & 0xFF;
                     entry[SIZE_OFF + 3] = (first_size >> 24) & 0xFF;
+                }
+                if (1) // make it read-only
+                {
+                    entry[AT_OFF] |= AT_READ_ONLY;
                 }
 
                 // replace dir entry

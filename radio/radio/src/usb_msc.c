@@ -44,7 +44,7 @@
 #include <usb_descriptor.h>
 
 #include <zephyr/logging/log.h>
-LOG_MODULE_REGISTER(usb_vmsc, CONFIG_USB_MASS_VSTORAGE_LOG_LEVEL);
+LOG_MODULE_REGISTER(usb_vmsc, LOG_LEVEL_INF);
 
 /* MSC Subclass and Protocol Codes */
 #define SCSI_TRANSPARENT_SUBCLASS	0x06

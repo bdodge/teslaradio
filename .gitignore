@@ -16,4 +16,5 @@ src/DA16200/DA16200_Application/build/*
 log.log
 *.user
 *.DS_Store
+xfs/xfs
 settings.json

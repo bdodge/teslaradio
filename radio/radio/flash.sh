@@ -32,5 +32,5 @@ BOARD_ROOT=${PWD}/..
 
 echo "flashing "build_${BOARD_NAME}/zephyr/merged.hex
 
-nrfjprog -f nrf53  --coprocessor CP_APPLICATION --program build_${BOARD_NAME}/zephyr/merged.hex --sectorerase --verify --reset
+nrfjprog -f nrf53  --coprocessor CP_APPLICATION --program build_${BOARD_NAME}/zephyr/zephyr.hex --sectorerase --verify --reset
 

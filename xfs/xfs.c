@@ -6,7 +6,7 @@
 #include "hacksect.h"
 
 #define NUM_ROOT_FILES	32
-#define FILE_NAME_MAX	64
+#define FILE_NAME_MAX	32
 
 int main(int argc, char **argv)
 {

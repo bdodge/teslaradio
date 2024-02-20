@@ -21,11 +21,7 @@ project(maven_testbed)
 if(CONFIG_BT)
   add_component(ble)
 endif()
-if (CONFIG_OPTION_AUDIO)
-  add_component(audio)
-  add_component(tones)
-  add_driver(ti_tas2505 zephyr)
-endif()
+add_component(tones)
 
 set(APPLICATION_SRCS
   ${APPLICATION_DIR}/main.c
