@@ -27,6 +27,8 @@ static uint8_t s_wav_header[] = {
 
 #define WAV_HEADER_SIZE (sizeof(s_wav_header))
 
+static uint32_t s_start_sectors[VFAT_ROOT_DIR_COUNT];
+static uint32_t s_start_stations[VFAT_ROOT_DIR_COUNT];
 
 static int disk_ram_access_status(struct disk_info *disk)
 {
@@ -101,12 +103,23 @@ static int disk_ram_access_read(struct disk_info *disk, uint8_t *buff,
                     fatptr[1] = 0xFFFFFFFF;
                     fatptr[2] = 0x0FFFFFFF;
                 }
-                else if (sector == 512) /* 2mb file fat ends at sector 512 */
+                else if (sector == 512) /* 2mb file fat ends 2 entries into sector 512 */
                 {
-                    // lots of EOC after last 2 fat entries of file
-                    for (fatdex = 2; fatdex < 18; fatdex++)
+                    int filedex = 1;
+
+                    // there should be N cluster ptrs after the last 2 for the first file
+                    // so point all those that are not EOC markers at the second cluster
+                    // of the first file so reading will continue from there
+                    //
+                    for (fatdex = 3; fatdex < VFAT_SECTOR_SIZE / 4; fatdex+= 2)
                     {
-                        fatptr[fatdex] = 0x0FFFFFFF;
+                        if (filedex < VFAT_ROOT_DIR_COUNT)
+                        {
+                            fatptr[fatdex] =  129;
+                            fatptr[fatdex + 1] = 0x0FFFFFFF; // EOC for safety
+                        }
+
+                        filedex++;
                     }
                 }
             }
@@ -125,19 +138,56 @@ static int disk_ram_access_read(struct disk_info *disk, uint8_t *buff,
     {
         uint32_t *src_ptr;
         uint32_t *dst_ptr;
+        uint32_t sector_offset = 0;
         int srcdex;
         int dstdex;
         int copy_cnt;
+        bool is_start_sector = false;
 
         dst_ptr = (uint32_t *)buff;
         dstdex = 0;
 
+        for (int ss = 0; ss < VFAT_ROOT_DIR_COUNT; ss++)
+        {
+            if (sector == s_start_sectors[ss])
+            {
+                LOG_INF("data read at sec %u starts wav file index %d", sector, ss);
+
+                // tune to this station
+                if (s_start_stations[ss] != 0)
+                {
+                   RequestTuneTo(s_start_stations[ss]);
+                }
+
+                is_start_sector = true;
+                break;
+            }
+            if (
+                    ss > 0
+                &&  sector > s_start_sectors[ss]
+                && (
+                        (ss == VFAT_ROOT_DIR_COUNT - 1)
+                    ||  (sector < s_start_sectors[ss + 1])
+                )
+            )
+            {
+                // the sector is within the first cluster of a file above the first file, after the start,
+                // so map that as if its the same relative sector in the first file
+                //
+                sector_offset = s_start_sectors[ss] + 16;
+                //LOG_INF("in sector %u  offset=%u", sector, sector_offset);
+                break;
+            }
+        }
+
         while (count > 0 && remain > 0)
         {
             // synthesize data
-            if (sector == 0)
+            if (is_start_sector)
             {
                 int hdrdex = 0;
+
+                is_start_sector = false;
 
                 src_ptr = (uint32_t *)s_wav_header;
 
@@ -152,7 +202,7 @@ static int disk_ram_access_read(struct disk_info *disk, uint8_t *buff,
             }
             else
             {
-                srcdex = (sector * VFAT_SECTOR_SIZE - WAV_HEADER_SIZE) % taunt_wav_len;
+                srcdex = ((sector - sector_offset) * VFAT_SECTOR_SIZE - WAV_HEADER_SIZE) % taunt_wav_len;
                 copy_cnt = VFAT_SECTOR_SIZE;
             }
 
@@ -271,19 +321,67 @@ static struct disk_info ram_disk =
 #define CLUST_HIGH      20
 #define CLUST_LOW       26
 #define SIZE_OFF        28
+#define CSUM_OFF        13
 
-void vdisk_setup_dir(void)
+uint8_t vdisk_csum_lfn(const char *name)
+{
+    uint8_t sum;
+    uint8_t i;
+
+    for (sum = i = 0; i < 11; i++)
+    {
+        sum = (((sum & 1) << 7) | ((sum & 0xFE) >> 1)) + (uint8_t)name[i];
+    }
+
+    return sum;
+}
+
+void vdisk_get_newfilename(struct station_info *stations, uint32_t num_stations, int fileindex, char *newlfn, uint32_t newlfn_size)
+{
+    int len;
+
+    memset(newlfn, '_', VFAT_MAX_FILENAME - 4);
+    snprintf(newlfn + VFAT_MAX_FILENAME - 4, 5, ".wav");
+
+    if (stations && num_stations)
+    {
+        if (fileindex < num_stations)
+        {
+            uint32_t freqmhz = stations[fileindex].freq_kHz / 1000;
+
+            len = snprintf(newlfn, newlfn_size - 1, "%u_%1u_MHz", freqmhz,
+                        stations[fileindex].freq_kHz / 100 - freqmhz * 10);
+        }
+        else
+        {
+            len = snprintf(newlfn, newlfn_size - 1, "-");
+        }
+
+        newlfn[len] = '_';
+
+       // LOG_INF("Change name %d =%s=", fileindex, newlfn);
+    }
+}
+
+void vdisk_setup_dir(struct station_info *stations, uint32_t num_stations)
 {
     char lfnbuf[VFAT_MAX_FILENAME + 14];
+    char newlfn[VFAT_MAX_FILENAME + 14];
     uint8_t entry[32];
     uint32_t ent_off = 0;
     uint32_t slen = section_sectors[SECTION_ROOTDIR].count * VFAT_SECTOR_SIZE;
     uint8_t attr;
     uint32_t lfndex = 0;
+    uint32_t newdex = 0;
     uint32_t filenum = 0;
 
     uint32_t first_cluster = 0;
     uint32_t first_size = 0;
+
+    memset(s_start_sectors, 0, sizeof(s_start_sectors));
+    memset(s_start_stations, 0, sizeof(s_start_stations));
+
+    vdisk_get_newfilename(stations, num_stations, filenum, newlfn, sizeof(newlfn));
 
     while (ent_off < slen && filenum < VFAT_ROOT_DIR_COUNT)
     {
@@ -308,6 +406,7 @@ void vdisk_setup_dir(void)
             }
 
             lfndex = (order - 1) * 13;
+            newdex = lfndex;
 
             if ((lfndex + 13) >= sizeof(lfnbuf))
             {
@@ -338,9 +437,28 @@ void vdisk_setup_dir(void)
                         if (lfnbuf[x + 1] == 0xFF)
                         {
                             lfnbuf[x] = lfnbuf[x + 1] = 0;
+                            newlfn[x] = 0xFF;
+                            newlfn[x + 1] = 0xFF;
                         }
                     }
                 }
+
+                entry[1] = newlfn[newdex++];
+                entry[3] = newlfn[newdex++];
+                entry[5] = newlfn[newdex++];
+                entry[7] = newlfn[newdex++];
+                entry[9] = newlfn[newdex++];
+                entry[14] = newlfn[newdex++];
+                entry[16] = newlfn[newdex++];
+                entry[18] = newlfn[newdex++];
+                entry[20] = newlfn[newdex++];
+                entry[22] = newlfn[newdex++];
+                entry[24] = newlfn[newdex++];
+                entry[28] = newlfn[newdex++];
+                entry[30] = newlfn[newdex++];
+
+                // replace dir entry
+                memcpy((uint8_t*)section_sectors[SECTION_ROOTDIR].sectors[0] + ent_off, entry, 32);
             }
         }
         else
@@ -361,10 +479,10 @@ void vdisk_setup_dir(void)
             sfn[12] = '\0';
             lfndex = 0;
 
-            cluster += (uint32_t)entry[CLUST_LOW];
-            cluster += (uint32_t)entry[CLUST_LOW + 1] << 8;
             cluster  = (uint32_t)entry[CLUST_HIGH] << 16;
             cluster += (uint32_t)entry[CLUST_HIGH + 1] << 24;
+            cluster += (uint32_t)entry[CLUST_LOW];
+            cluster += (uint32_t)entry[CLUST_LOW + 1] << 8;
 
             size  = (uint32_t)entry[SIZE_OFF];
             size += (uint32_t)entry[SIZE_OFF + 1] << 8;
@@ -380,9 +498,9 @@ void vdisk_setup_dir(void)
             }
             else
             {
-                if (1) // point all file's to the first files cluster chain (i.e. link)
+                if (0) // point all file's to the first files cluster chain (i.e. link) but add 1 for filenum
                 {
-                    entry[CLUST_LOW] = first_cluster & 0xFF;
+                    entry[CLUST_LOW] = (first_cluster + 0) & 0xFF;
                     entry[CLUST_LOW + 1] = (first_cluster >> 8) & 0xFF;
                     entry[CLUST_HIGH] = (first_cluster >> 16) & 0xFF;
                     entry[CLUST_HIGH] = (first_cluster >> 24) & 0xFF;
@@ -394,7 +512,7 @@ void vdisk_setup_dir(void)
                     entry[SIZE_OFF + 2] = (first_size >> 16) & 0xFF;
                     entry[SIZE_OFF + 3] = (first_size >> 24) & 0xFF;
                 }
-                if (1) // make it read-only
+                if (0) // make it read-only
                 {
                     entry[AT_OFF] |= AT_READ_ONLY;
                 }
@@ -403,16 +521,25 @@ void vdisk_setup_dir(void)
                 memcpy((uint8_t*)section_sectors[SECTION_ROOTDIR].sectors[0] + ent_off, entry, 32);
             }
 
+            // remember first sector of each file entry
+            LOG_INF("Set starting sector %08X for filenum %d", (cluster - 3) * 64, filenum);
+            LOG_INF("Set freq kHz %d for filenum %d", stations[filenum].freq_kHz, filenum);
+            k_msleep(150);
+
+            s_start_sectors[filenum] = (cluster - 3) * 64;
+            s_start_stations[filenum] = stations[filenum].freq_kHz;
+
             filenum++;
+            vdisk_get_newfilename(stations, num_stations, filenum, newlfn, sizeof(newlfn));
         }
 
         ent_off += 32;
     }
 }
 
-int vdisk_init(void)
+int vdisk_init(struct station_info *stations, uint32_t num_stations)
 {
-    vdisk_setup_dir();
+    vdisk_setup_dir(stations, num_stations);
 
     return disk_access_register(&ram_disk);
 }

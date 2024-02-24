@@ -114,13 +114,13 @@ static int enable_usb_device_next(void)
 }
 #endif /* IS_ENABLED(CONFIG_USB_DEVICE_STACK_NEXT) */
 
-int vfs_init(void)
+int vfs_init(struct station_info *stations, uint32_t num_stations)
 {
     int ret;
 
     do // try
     {
-        ret = vdisk_init();
+        ret = vdisk_init(stations, num_stations);
 
         if (ret)
         {

@@ -6209,18 +6209,18 @@ FRESULT f_mkfs (
 			pau = sz_au;
 			/* Pre-determine number of clusters and FAT sub-type */
 			if (fsty == FS_FAT32) {	/* FAT32 volume */
-				printf("fat32-------\n");
 				if (pau == 0) {	/* AU auto-selection */
 					n = (DWORD)sz_vol / 0x20000;	/* Volume size in unit of 128KS */
 					for (i = 0, pau = 1; cst32[i] && cst32[i] <= n; i++, pau <<= 1) ;	/* Get from table */
 				}
 				n_clst = (DWORD)sz_vol / pau;	/* Number of clusters */
 				sz_fat = (n_clst * 4 + 8 + ss - 1) / ss;	/* FAT size [sector] */
+				printf("fat32------- pau=%u  fatz=%u\n", pau, sz_fat);
 				sz_rsv = 32;	/* Number of reserved sectors */
 				sz_dir = 0;		/* No static directory */
 				if (n_clst <= MAX_FAT16 || n_clst > MAX_FAT32) LEAVE_MKFS(FR_MKFS_ABORTED);
 			} else {				/* FAT volume */
-				printf("fat12/26-------\n");
+				printf("fat12/16-------\n");
 				if (pau == 0) {	/* au auto-selection */
 					n = (DWORD)sz_vol / 0x1000;	/* Volume size in unit of 4KS */
 					for (i = 0, pau = 1; cst[i] && cst[i] <= n; i++, pau <<= 1) ;	/* Get from table */
@@ -6311,13 +6311,13 @@ FRESULT f_mkfs (
 			st_word(buf + BPB_BkBootSec32, 6);			/* Offset of backup VBR (VBR + 6) */
 			buf[BS_DrvNum32] = 0x80;					/* Drive number (for int13) */
 			buf[BS_BootSig32] = 0x29;					/* Extended boot signature */
-			memcpy(buf + BS_VolLab32, "T RADIO    " "FAT32   ", 19);	/* Volume label, FAT signature */
+			memcpy(buf + BS_VolLab32, "T_RADIO    " "FAT32   ", 19);	/* Volume label, FAT signature */
 		} else {
 			st_dword(buf + BS_VolID, vsn);				/* VSN */
 			st_word(buf + BPB_FATSz16, (WORD)sz_fat);	/* FAT size [sector] */
 			buf[BS_DrvNum] = 0x80;						/* Drive number (for int13) */
 			buf[BS_BootSig] = 0x29;						/* Extended boot signature */
-			memcpy(buf + BS_VolLab, "T RADIO    " "FAT     ", 19);	/* Volume label, FAT signature */
+			memcpy(buf + BS_VolLab, "T_RADIO    " "FAT     ", 19);	/* Volume label, FAT signature */
 		}
 		st_word(buf + BS_55AA, 0xAA55);					/* Signature (offset is fixed here regardless of sector size) */
 

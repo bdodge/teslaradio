@@ -6,7 +6,7 @@
 #include "hacksect.h"
 
 #define NUM_ROOT_FILES	32
-#define FILE_NAME_MAX	32
+#define FILE_NAME_MAX	26
 
 int main(int argc, char **argv)
 {
@@ -74,7 +74,10 @@ int main(int argc, char **argv)
 			}
 			else
 			{
-				fz = 512;
+				// 128 sectors, to force two clusters (each is 64 sectors)  the first
+				// cluster is in the file entry, the second in the fat
+				//
+				fz = 64 * 2 * 512;
 			}
 			for (int s = 0; s < fz; s += 512)
 			{

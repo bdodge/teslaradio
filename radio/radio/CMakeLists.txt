@@ -21,7 +21,9 @@ project(maven_testbed)
 if(CONFIG_BT)
   add_component(ble)
 endif()
+add_component(si4703)
 add_component(tones)
+add_driver(i2c zephyr)
 
 set(APPLICATION_SRCS
   ${APPLICATION_DIR}/main.c
