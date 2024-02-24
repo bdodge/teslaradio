@@ -49,7 +49,7 @@ static int disk_ram_access_read(struct disk_info *disk, uint8_t *buff,
 
     if (last_sector < sector || last_sector > VFAT_SECTOR_COUNT)
     {
-        LOG_ERR("Sector %u is outside the range %u",
+        LOG_INF("Sector %u is outside the range %u",
                 last_sector, VFAT_SECTOR_COUNT);
         return -EIO;
     }
@@ -107,15 +107,25 @@ static int disk_ram_access_read(struct disk_info *disk, uint8_t *buff,
                 {
                     int filedex = 1;
 
-                    // there should be N cluster ptrs after the last 2 for the first file
-                    // so point all those that are not EOC markers at the second cluster
-                    // of the first file so reading will continue from there
+                    // This is where the magic happens
+                    //
+                    // in sector 512 of the FAT, the first three entries are the last two cluster ptrs of
+                    // our first 2Gb file and its EOC.  That means all our other files (of 1024 bytes each)
+                    // should have one cluster entry and one EOC starting at the third entry.
+                    //
+                    // i change the cluster ptr to point at the second cluster of the first file
+                    // (the first cluster is 3) so that the second cluster of the file points
+                    // to sector 64 and so on, just like the first file.
+                    //
+                    // the first cluster sectors are read-back special with the wav header prepended
+                    // and we hand-offset the sector numbers by remembering where the file's first
+                    // sector is when we parse the root dir.
                     //
                     for (fatdex = 3; fatdex < VFAT_SECTOR_SIZE / 4; fatdex+= 2)
                     {
                         if (filedex < VFAT_ROOT_DIR_COUNT)
                         {
-                            fatptr[fatdex] =  129;
+                            fatptr[fatdex] = 4;
                             fatptr[fatdex + 1] = 0x0FFFFFFF; // EOC for safety
                         }
 
@@ -174,14 +184,15 @@ static int disk_ram_access_read(struct disk_info *disk, uint8_t *buff,
                 // the sector is within the first cluster of a file above the first file, after the start,
                 // so map that as if its the same relative sector in the first file
                 //
-                sector_offset = s_start_sectors[ss] + 16;
-                //LOG_INF("in sector %u  offset=%u", sector, sector_offset);
+                sector_offset = s_start_sectors[ss] - s_start_sectors[0];
                 break;
             }
         }
 
         while (count > 0 && remain > 0)
         {
+            LOG_DBG("in sector %u (offset=%u)", sector - sector_offset, sector_offset);
+
             // synthesize data
             if (is_start_sector)
             {
@@ -522,9 +533,8 @@ void vdisk_setup_dir(struct station_info *stations, uint32_t num_stations)
             }
 
             // remember first sector of each file entry
-            LOG_INF("Set starting sector %08X for filenum %d", (cluster - 3) * 64, filenum);
-            LOG_INF("Set freq kHz %d for filenum %d", stations[filenum].freq_kHz, filenum);
-            k_msleep(150);
+            LOG_DBG("Set starting sector %08X for filenum %d", (cluster - 3) * 64, filenum);
+            LOG_DBG("Set freq kHz %d for filenum %d", stations[filenum].freq_kHz, filenum);
 
             s_start_sectors[filenum] = (cluster - 3) * 64;
             s_start_stations[filenum] = stations[filenum].freq_kHz;

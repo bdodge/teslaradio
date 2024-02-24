@@ -451,7 +451,7 @@ int si4703_set_freq(struct si4703_device *chip, unsigned int freq)
 
     channel = (freq - FREQ_MIN) / CHANNEL_SPACE;
 
-    LOG_INF("Channel %d (freq: %d kHz  -> %d kHz)", channel, freq, channel * CHANNEL_SPACE + FREQ_MIN);
+    LOG_DBG("Channel %d (freq: %d kHz  -> %d kHz)", channel, freq, channel * CHANNEL_SPACE + FREQ_MIN);
 
     ret = si4703_set_chan(chip, channel);
     return ret;
@@ -591,7 +591,7 @@ static int si4703_disco_slice(struct si4703_device *chip, bool *complete)
     rssi = si4703_get_rssi(chip);
     chan = si4703_get_chan(chip);
 
-    LOG_INF("disco check chan %u at %u 0x%04X", chip->disco_chan, chan, rssi);
+    LOG_DBG("disco check chan %u at %u 0x%04X", chip->disco_chan, chan, rssi);
 
     // for stations with signal, add to our database
     if ((rssi & 0xFF) >= chip->seek_thr && !(rssi & AFCRL))
