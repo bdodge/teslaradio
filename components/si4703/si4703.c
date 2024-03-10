@@ -1,12 +1,10 @@
 
 #include "si4703.h"
-#include "i2c_zephyr.h"
 #include <errno.h>
 
 #include <zephyr/kernel.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/i2c.h>
-#include <zephyr/drivers/pinctrl.h>
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(si4703, LOG_LEVEL_INF);
 
@@ -46,6 +44,7 @@ static struct si4703_device
     uint16_t    skcnt;
 
     uint16_t    cur_station;
+    uint32_t    cur_channel;
     uint8_t     curvol;
     bool        stereo;
     bool        muted;
@@ -431,6 +430,7 @@ int si4703_set_chan(struct si4703_device *chip, uint16_t channel)
         LOG_INF("AFC railed on set chan");
     }
 
+    chip->cur_channel = channel;
     return ret;
 }
 
@@ -543,6 +543,7 @@ static int si4703_seek(struct si4703_device *chip, int up_down)
     }
     while (bumps < 10);
 
+    chip->cur_channel = si4703_get_chan(chip);
     si4703_show_channel(chip);
 
     return ret;
@@ -704,6 +705,47 @@ static int si4703_reset(struct si4703_device *chip, int longloop)
     ret = gpio_pin_set_dt(m_chip.rst_spec, true);
     k_msleep(10);
     ret = gpio_pin_set_dt(m_chip.rst_spec, false);
+    return ret;
+}
+
+int SI4703GetTunedStation(
+                        uint32_t *out_freq_kHz,
+                        uint8_t *out_rssi,
+                        bool *out_stereo,
+                        const char **rds_short,
+                        const char **rds_long
+                        )
+{
+    int ret = -EAGAIN;
+    uint16_t rssi;
+
+    if (m_chip.state != TUNER_TUNED)
+    {
+        return ret;
+    }
+    rssi = si4703_get_rssi(&m_chip);
+
+    if  (out_freq_kHz)
+    {
+        *out_freq_kHz = m_chip.cur_channel * CHANNEL_SPACE + FREQ_MIN;
+    }
+    if (out_rssi)
+    {
+        *out_rssi = rssi & 0xFF;
+    }
+    if (out_stereo)
+    {
+        *out_stereo = (rssi & 0x100) ? true : false;
+    }
+    if (rds_short)
+    {
+        *rds_short = m_chip.name;
+    }
+    if (rds_long)
+    {
+        *rds_long = m_chip.text;
+    }
+    ret = 0;
     return ret;
 }
 

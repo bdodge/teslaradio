@@ -16,14 +16,17 @@ include(${TREE_ROOT}/helpers.cmake)
 list(APPEND DTS_ROOT ${TREE_ROOT})
 
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
-project(maven_testbed)
+project(teslaradio)
 
+add_component(settings)
+add_component(asserts)
 if(CONFIG_BT)
   add_component(ble)
 endif()
 add_component(si4703)
+add_component(ssd1306)
+add_component(audioin)
 add_component(tones)
-add_driver(i2c zephyr)
 
 set(APPLICATION_SRCS
   ${APPLICATION_DIR}/main.c

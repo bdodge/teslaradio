@@ -991,7 +991,7 @@ static void mass_thread_main(int arg1, int unused)
 		case THREAD_OP_WRITE_QUEUED:
 			if (disk_access_write(disk_pdrv,
 						page, curr_lba, 1)) {
-				LOG_ERR("!!!!! Disk Write Error %u !!!!!",
+				LOG_DBG("!!!!! Disk Write Error %u !!!!!",
 					curr_lba);
 			}
 			thread_memory_write_done();

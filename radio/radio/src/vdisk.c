@@ -1,5 +1,7 @@
 
 #include "vdisk.h"
+#include "asserts.h"
+#include "audioin.h"
 #include <zephyr/types.h>
 #include <zephyr/drivers/disk.h>
 #include <zephyr/init.h>
@@ -18,14 +20,23 @@ LOG_MODULE_REGISTER(vdisk, CONFIG_DISK_LOG_LEVEL);
 
 #include "taunt.h"
 
-static uint8_t s_wav_header[] = {
-  0x52, 0x49, 0x46, 0x46, 0x8c, 0x64, 0x01, 0x00, 0x57, 0x41, 0x56, 0x45,
-  0x66, 0x6d, 0x74, 0x20, 0x10, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00,
-  0xf1, 0x56, 0x00, 0x00, 0xf1, 0x56, 0x00, 0x00, 0x01, 0x00, 0x08, 0x00,
-  0x64, 0x61, 0x74, 0x61, 0x00, 0x00, 0x00, 0x80
+static uint8_t s_wav_header_live[] = {
+  0x52, 0x49, 0x46, 0x46,   // "RIFF"
+  0x28, 0x00, 0x00, 0x80,   // file size 2Gb + 40
+  0x57, 0x41, 0x56, 0x45,   // "WAVE"
+  0x66, 0x6d, 0x74, 0x20,   // "fmt<space>"
+  0x10, 0x00, 0x00, 0x00,   // fmt section byte length
+  0x01, 0x00,               // PCM format (1)
+  0x02, 0x00,               // channels (2)
+  0x44, 0xac, 0x00, 0x00,   // sample rate 44100
+  0x10, 0xb1, 0x02, 0x00,   // bitrate 176400
+  0x04, 0x00,               // bytes for frame
+  0x10, 0x00,               // 16 bits per sample
+  0x64, 0x61, 0x74, 0x61,   // "data"
+  0x00, 0x00, 0x00, 0x80    // data section byte length - 2Gb
 };
 
-#define WAV_HEADER_SIZE (sizeof(s_wav_header))
+#define WAV_HEADER_SIZE (sizeof(s_wav_header_live))
 
 static uint32_t s_start_sectors[VFAT_ROOT_DIR_COUNT];
 static uint32_t s_start_stations[VFAT_ROOT_DIR_COUNT];
@@ -169,6 +180,12 @@ static int disk_ram_access_read(struct disk_info *disk, uint8_t *buff,
                    RequestTuneTo(s_start_stations[ss]);
                 }
 
+                // start i2s stream
+                if (!AudioActive())
+                {
+                    AudioStart();
+                }
+
                 is_start_sector = true;
                 break;
             }
@@ -200,7 +217,7 @@ static int disk_ram_access_read(struct disk_info *disk, uint8_t *buff,
 
                 is_start_sector = false;
 
-                src_ptr = (uint32_t *)s_wav_header;
+                src_ptr = (uint32_t *)s_wav_header_live;
 
                 // prepend wave header
                 while (dstdex < WAV_HEADER_SIZE / 4)
@@ -217,20 +234,90 @@ static int disk_ram_access_read(struct disk_info *disk, uint8_t *buff,
                 copy_cnt = VFAT_SECTOR_SIZE;
             }
 
-            src_ptr = (uint32_t *)taunt_wav;
-            srcdex /= 4;
-            copy_cnt /= 4;
-
-            while (copy_cnt > 0)
+            if (AudioActive())
             {
-                dst_ptr[dstdex++] = src_ptr[srcdex++];
-
-                if (srcdex >= taunt_wav_len / 4)
+                // if audio pipe is active, source data from it except first sector
+                // which we fill with 0
+                //
+                if (is_start_sector)
                 {
-                    srcdex = 0;
-                }
+                    srcdex /= 4;
+                    copy_cnt /= 4;
 
-                copy_cnt--;
+                    while (copy_cnt > 0)
+                    {
+                        dst_ptr[dstdex++] = 0;
+                        copy_cnt--;
+                    }
+                }
+                else
+                {
+                    void *samples;
+                    size_t sample_bytes;
+                    int timer;
+                    int ret;
+
+                    srcdex = 0;
+                    sample_bytes = 0;
+                    samples = NULL;
+                    timer = 500;
+
+                    while (timer > 0)
+                    {
+                        // timeout getting samples
+                        ret = AudioGetSamples(&samples, &sample_bytes);
+                        if (!ret)
+                        {
+                            verify(sample_bytes == VFAT_SECTOR_SIZE);
+                            break;
+                        }
+
+                        timer-= 4;
+                        k_msleep(4);
+                    }
+
+                    if (sample_bytes > 0)
+                    {
+                        src_ptr = (uint32_t *)samples;
+                        copy_cnt = sample_bytes / 4;
+                        while (copy_cnt > 0)
+                        {
+                            dst_ptr[dstdex++] = src_ptr[srcdex++];
+                            copy_cnt--;
+                        }
+                    }
+                    else
+                    {
+                        LOG_WRN("underrun");
+
+                        copy_cnt = sample_bytes / 4;
+                        while (copy_cnt > 0)
+                        {
+                            dst_ptr[dstdex++] = 0;
+                            copy_cnt--;
+                        }
+                    }
+                }
+            }
+            else
+            {
+                // audio pipe not active, source data from canned file
+                //
+                src_ptr = (uint32_t *)taunt_wav;
+                srcdex /= 4;
+                copy_cnt /= 4;
+
+                while (copy_cnt > 0)
+                {
+                    dst_ptr[dstdex++] = src_ptr[srcdex++];
+
+                    if (srcdex >= taunt_wav_len / 4)
+                    {
+                        srcdex = 0;
+                    }
+
+                    copy_cnt--;
+                }
             }
 
             sector++;
