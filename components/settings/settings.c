@@ -435,6 +435,27 @@ exit:
 }
 #endif
 
+/*
+static int _OnPrintSetting(
+        const char *in_key,
+        size_t in_count,
+        settings_read_cb in_callback,
+        void *in_cb_arg,
+        void *in_param
+      )
+{
+    int ret = -EINVAL;
+
+    // key will be NULL for exact-match of keypath which is what we expect here
+    if (in_key)
+    {
+        LOG_INF("setting =%s= loaded", in_key);
+    }
+
+    return ret;
+}
+*/
+
 int SettingsInit(void)
 {
     int ret;
@@ -445,6 +466,7 @@ int SettingsInit(void)
     ret = settings_load();
     require_noerr(ret, exit);
 
+    //ret = settings_load_subtree_direct(NULL, _OnPrintSetting, (void *)NULL);
 #ifdef UNIT_TEST
     ret = _UnitTestSettings();
     require_noerr(ret, exit);

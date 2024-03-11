@@ -291,7 +291,7 @@ int BLEinit(const char *in_device_name)
 
         if (IS_ENABLED(CONFIG_SETTINGS))
         {
-            settings_load();
+      //      settings_load();
         }
 
         result = BLEServiceInit();

@@ -177,7 +177,7 @@ static int disk_ram_access_read(struct disk_info *disk, uint8_t *buff,
                 // tune to this station
                 if (s_start_stations[ss] != 0)
                 {
-                   RequestTuneTo(s_start_stations[ss]);
+                   TunerRequestTuneTo(s_start_stations[ss]);
                 }
 
                 // start i2s stream
