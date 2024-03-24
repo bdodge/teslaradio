@@ -119,22 +119,53 @@ static void si4703_dump_regs(void)
     }
 }
 
-static uint16_t si4703_get_rssi(struct si4703_device *chip)
+static int si4703_get_rssi(struct si4703_device *chip, uint8_t *out_rssi, bool *out_afcrailed)
 {
+    int ret = -EINVAL;
     uint16_t val;
 
-    si4703_read(chip, REG_RSSI, &val);
-    return val;
+    ret = si4703_read(chip, REG_RSSI, &val);
+    require_noerr(ret, exit);
+
+    if (out_rssi)
+    {
+        *out_rssi = val & 0xFF;
+    }
+
+    if (out_afcrailed)
+    {
+        *out_afcrailed = (val & AFCRL) ? true : false;
+    }
+exit:
+    return ret;
+}
+
+static int si4703_get_int_status(struct si4703_device *chip, uint16_t *out_status)
+{
+    int ret = -EINVAL;
+    uint16_t val;
+
+    require(out_status, exit);
+
+    ret = si4703_read(chip, REG_RSSI, &val);
+    require_noerr(ret, exit);
+
+    *out_status = val & 0xFF00;
+exit:
+    return ret;
 }
 
 static int si4703_wait_stc(struct si4703_device *chip, int timeoutms, int on_off)
 {
+    int ret;
     int timeout = timeoutms;
     uint16_t val;
 
     do
     {
-        val = si4703_get_rssi(chip);
+        ret = si4703_get_int_status(chip, &val);
+        require_noerr(ret, exit);
+
         if (on_off && (val & STC))
         {
             break;
@@ -155,7 +186,9 @@ static int si4703_wait_stc(struct si4703_device *chip, int timeoutms, int on_off
         return -ENODEV;
     }
 
-    return 0;
+    ret = 0;
+exit:
+    return ret;
 }
 
 static uint16_t si4703_get_chan(struct si4703_device *chip)
@@ -255,22 +288,28 @@ static void si4703_clear_rds(struct si4703_device *chip)
 static int si4703_show_channel(struct si4703_device *chip)
 {
     int ret = 0;
-    uint16_t val;
-    uint16_t rssi;
+    uint16_t status;
+    uint16_t chan;
+    uint8_t rssi;
     uint32_t khz;
     float freq;
 
-    rssi = si4703_get_rssi(chip);
-    val = si4703_get_chan(chip) & 0x3ff;
+    ret = si4703_get_rssi(chip, &rssi, NULL);
+    require_noerr(ret, exit);
 
-    khz = FREQ_MIN + val * CHANNEL_SPACE;
+    ret = si4703_get_int_status(chip, &status);
+    require_noerr(ret, exit);
+
+    chan = si4703_get_chan(chip) & 0x3ff;
+
+    khz = FREQ_MIN + chan * CHANNEL_SPACE;
     freq = (float)khz / 1000;
 
     LOG_INF("Channel: %d  %4.1f MHz %u %s rds:%s",
-            val, freq, rssi & 0xFF,
-            (rssi & 0x100) ? "stereo" : "mono",
-            (rssi & 0x8000) ? "rdy" : "");
-
+            chan, freq, rssi & 0xFF,
+            (status & 0x100) ? "stereo" : "mono",
+            (status & 0x8000) ? "rdy" : "");
+exit:
     return ret;
 }
 
@@ -356,7 +395,8 @@ int si4703_set_chan(struct si4703_device *chip, uint16_t channel)
 {
     int ret = -EINVAL;
     uint16_t val;
-    uint16_t rssi;
+    uint8_t rssi;
+    bool afcrailed;
 
     if (chip->state < TUNER_DISCOVERY)
     {
@@ -391,8 +431,6 @@ int si4703_set_chan(struct si4703_device *chip, uint16_t channel)
 
     si4703_show_channel(chip);
 
-    rssi = si4703_get_rssi(chip);
-
     /* clear tune bit */
     if (si4703_read(chip, REG_CHANNEL, &val))
     {
@@ -411,13 +449,17 @@ int si4703_set_chan(struct si4703_device *chip, uint16_t channel)
         return -EIO;
     }
 
-    if (si4703_get_rssi(chip) & AFCRL)
+    ret = si4703_get_rssi(chip, &rssi, &afcrailed);
+    require_noerr(ret, exit);
+
+    if (afcrailed)
     {
         // not an error, just that there is prolly a better station close by
         LOG_INF("AFC railed on set chan");
     }
 
     chip->cur_channel = channel;
+exit:
     return ret;
 }
 
@@ -440,6 +482,7 @@ int si4703_set_freq(struct si4703_device *chip, unsigned int freq)
 
     LOG_DBG("Channel %d (freq: %d kHz  -> %d kHz)", channel, freq, channel * CHANNEL_SPACE + FREQ_MIN);
 
+    chip->state = TUNER_TUNED;
     ret = si4703_set_chan(chip, channel);
     return ret;
 }
@@ -489,7 +532,8 @@ static int si4703_seek(struct si4703_device *chip, int up_down)
         return -ENODEV;
     }
 
-    stat = si4703_get_rssi(chip);
+    ret = si4703_get_int_status(chip, &stat);
+    require_noerr(ret, exit);
     if (stat & SFBL)
     {
         LOG_INF("Seek limit");
@@ -513,7 +557,9 @@ static int si4703_seek(struct si4703_device *chip, int up_down)
 
     do
     {
-        if (!(si4703_get_rssi(chip) & AFCRL))
+        ret = si4703_get_int_status(chip, &stat);
+        require_noerr(ret, exit);
+        if (!(stat & AFCRL))
         {
             break;
         }
@@ -532,127 +578,8 @@ static int si4703_seek(struct si4703_device *chip, int up_down)
 
     chip->cur_channel = si4703_get_chan(chip);
     si4703_show_channel(chip);
-
+exit:
     return ret;
-}
-
-static int si4703_disco_slice(struct si4703_device *chip, bool *complete)
-{
-    int ret;
-    uint16_t chan;
-    uint16_t rssi;
-
-    if  (complete)
-    {
-        *complete = false;
-    }
-
-    if (chip->disco_station >= MAX_CHANNELS)
-    {
-        LOG_INF("Scanning for channels");
-
-        chip->disco_station = 0;
-        chip->disco_chan = 0;
-
-        si4703_clear_rds(chip);
-
-        /*
-        // clear out all channel info
-        //
-        for (chan = 0; chan < MAX_CHANNELS; chan++)
-        {
-            chip->stations[chip->disco_chan].channel = 0;
-            chip->stations[chip->disco_chan].freq_kHz = 0;
-            chip->stations[chip->disco_chan].rssi = 0;
-            memset(chip->stations[chip->disco_chan].name, 0, sizeof(chip->stations[chip->disco_chan].name));
-            memset(chip->stations[chip->disco_chan].text, 0, sizeof(chip->stations[chip->disco_chan].text));
-        }
-        */
-    }
-
-    // get current tuned chan state and signal
-    ret = si4703_set_chan(chip, chip->disco_chan);
-    if (ret)
-    {
-        return ret;
-    }
-
-    k_msleep(10);
-    rssi = si4703_get_rssi(chip);
-    chan = si4703_get_chan(chip);
-
-    LOG_DBG("disco check chan %u at %u 0x%04X", chip->disco_chan, chan, rssi);
-
-    // for stations with signal, add to our database
-    if ((rssi & 0xFF) >= chip->seek_thr && !(rssi & AFCRL))
-    {
-        LOG_INF("Disco add %d chan %d rssi 0x%04X", chip->disco_station, chan, rssi);
-
-    /*
-        chip->stations[chip->disco_station].channel = chan;
-        chip->stations[chip->disco_station].freq_kHz = chan * CHANNEL_SPACE + FREQ_MIN;
-        chip->stations[chip->disco_station].rssi = rssi & 0xFF;
-    */
-        chip->disco_station++;
-        if (chip->disco_station >= MAX_CHANNELS)
-        {
-            // TODO evict weakest and move slots up?
-            LOG_ERR("too many channels");
-            if (complete)
-            {
-                *complete = true;
-            }
-        }
-    }
-
-    chip->disco_chan = chan;
-
-    if (rssi & AFCRL)
-    {
-        uint16_t max_chan = (FREQ_MAX - FREQ_MIN) / CHANNEL_SPACE;
-
-        // if AFCRL was set in rssi, it means we are close to a strong station
-        // so just bump up one channel
-        //
-        LOG_INF("Fudge at chan %u 0x%04X", chan, rssi);
-        chip->disco_chan = chan + 1;
-
-        if (chip->disco_chan > max_chan)
-        {
-            if (complete)
-            {
-                *complete = true;
-            }
-        }
-    }
-    else
-    {
-        // seek up to next chan
-        //
-        ret = si4703_seek(chip, 1);
-        if (ret)
-        {
-            LOG_INF("seek fail, recheck from %u", chip->disco_chan);
-            chip->disco_chan = chan + 1;
-        }
-        else
-        {
-            chan = si4703_get_chan(chip);
-            LOG_INF("Seek up to chan %u 0x%04X", chan, rssi);
-            if (chan < chip->disco_chan)
-            {
-                //wrapped, all done
-                if (complete)
-                {
-                    *complete = true;
-                }
-            }
-
-            chip->disco_chan = chan;
-        }
-    }
-
-    return 0;
 }
 
 static int si4703_config(struct si4703_device *chip)
@@ -724,14 +651,11 @@ static int SI4703GetTunedFreq(
                         )
 {
     int ret = -EAGAIN;
-    uint16_t rssi;
 
     if (m_chip.state != TUNER_TUNED)
     {
         return ret;
     }
-
-    rssi = si4703_get_rssi(&m_chip);
 
     if  (out_freq_kHz)
     {
@@ -749,24 +673,19 @@ static int SI4703GetRSSI(
                         )
 {
     int ret = -EAGAIN;
-    uint16_t rssi;
+    uint16_t status;
 
     if (m_chip.state != TUNER_TUNED)
     {
         return ret;
     }
 
-    rssi = si4703_get_rssi(&m_chip);
-
-    if (out_rssi)
-    {
-        *out_rssi = rssi & 0xFF;
-    }
-    if (out_stereo)
-    {
-        *out_stereo = (rssi & 0x100) ? true : false;
-    }
-    ret = 0;
+    ret = si4703_get_rssi(&m_chip, out_rssi, out_afc_railed);
+    require_noerr(ret, exit);
+    ret = si4703_get_int_status(&m_chip, &status);
+    require_noerr(ret, exit);
+    *out_stereo = (status & 0x100) ? true : false;
+exit:
     return ret;
 }
 
@@ -778,7 +697,7 @@ static int SI4703GetRDS(
                         )
 {
     int ret = -EAGAIN;
-    uint16_t rssi;
+    uint16_t status;
 
     if (m_chip.state != TUNER_TUNED)
     {
@@ -790,8 +709,9 @@ static int SI4703GetRDS(
         *out_rds_changed = false;
     }
 
-    rssi = si4703_get_rssi(&m_chip);
-    if (rssi & 0x8000)
+    ret = si4703_get_int_status(&m_chip, &status);
+    require_noerr(ret, exit);
+    if (status & 0x8000)
     {
         si4703_decode_rds(&m_chip);
 
@@ -813,6 +733,7 @@ static int SI4703GetRDS(
     }
 
     ret = 0;
+exit:
     return ret;
 }
 
@@ -921,177 +842,6 @@ int SI4703DiscoverStations(void)
     m_chip.state = TUNER_DISCOVERY;
     return 0;
 }
-
-#if 0
-int SI4703GetStations(struct station_info **stations, uint32_t *num_stations)
-{
-    int ret = -EINVAL;
-    uint32_t nstations;
-
-    if (stations)
-    {
-        *stations = m_chip.stations;
-    }
-
-    if (num_stations)
-    {
-        *num_stations = 0;
-    }
-
-    if (m_chip.state < TUNER_READY)
-    {
-        return -EAGAIN;
-    }
-
-    for (nstations = 0; nstations < MAX_CHANNELS; nstations++)
-    {
-        if (m_chip.stations[nstations].rssi == 0)
-        {
-            break;
-        }
-    }
-
-    if (num_stations)
-    {
-        *num_stations = nstations;
-    }
-
-    ret = 0;
-    return ret;
-}
-
-int SI4703Slice(uint32_t *delay, tuner_state_t *state)
-{
-    uint64_t now = k_uptime_get();
-    uint16_t val;
-    uint16_t rssi;
-    bool complete;
-    int ret;
-
-    switch (m_chip.state)
-    {
-    case TUNER_INIT:
-        si4703_reset(&m_chip, 0);
-
-        // enable osc
-        ret = si4703_write(&m_chip, REG_TEST1, 0x8100);
-        if (ret)
-        {
-            break;
-        }
-
-        m_chip.state = TUNER_RESET;
-        m_chip.state_time = now + POST_RESET_MS;
-        *delay = 50;
-        break;
-
-    case TUNER_RESET:
-        if (now > m_chip.state_time)
-        {
-            // get intitial val for all regs
-            ret = si4703_read(&m_chip, REG_READ_START - 1, &val);
-            if (ret)
-            {
-                m_chip.state = TUNER_INIT;
-                break;
-            }
-
-            // turn on power
-            ret = si4703_power_up(&m_chip);
-            if (ret)
-            {
-                m_chip.state = TUNER_INIT;
-                break;
-            }
-
-            m_chip.state = TUNER_CONFIG;
-            m_chip.state_time = now + POST_POWERUP_MS;
-        }
-
-        *delay = 50;
-        break;
-
-    case TUNER_CONFIG:
-        if (now > m_chip.state_time)
-        {
-            si4703_read(&m_chip, REG_CHIPID, &val);
-            if (!(val & 0xFF))
-            {
-                // no f/w version in chip-id, re-init
-                m_chip.state = TUNER_INIT;
-                break;
-            }
-
-            LOG_INF("Chip ID: 0x%04X", val);
-
-            ret = si4703_config(&m_chip);
-            if (ret)
-            {
-                m_chip.state = TUNER_INIT;
-                break;
-            }
-
-            m_chip.state = TUNER_READY;
-            m_chip.state_time = now + POST_CONFIG_MS;
-        }
-
-        *delay = 20;
-        break;
-
-    case TUNER_DISCOVERY:
-        ret = si4703_disco_slice(&m_chip, &complete);
-        if (ret)
-        {
-            m_chip.state = TUNER_INIT;
-            break;
-        }
-
-        if (complete)
-        {
-            m_chip.state = TUNER_READY;
-        }
-
-        *delay = 20;
-        break;
-
-    case TUNER_READY:
-        *delay = 100;
-        break;
-
-    case TUNER_TUNED:
-        rssi = si4703_get_rssi(&m_chip);
-        if (rssi & 0x8000)
-        {
-            si4703_decode_rds(&m_chip);
-
-            if (m_chip.rds_changed && m_chip.cur_station < MAX_CHANNELS)
-            {
-                float freq = (float)(m_chip.stations[m_chip.cur_station].freq_kHz) / 1000.0;
-
-                m_chip.stereo = (rssi & 0x100) ? true : false;
-                m_chip.stations[m_chip.cur_station].rssi = rssi & 0xFF;
-
-                LOG_INF("%2d  %4.1f %s S:%8s  T:%s",
-                        m_chip.cur_station, freq,
-                        m_chip.stereo ? "stereo" : "mono", m_chip.name, m_chip.text);
-
-                memcpy(m_chip.stations[m_chip.cur_station].name, m_chip.name, sizeof(m_chip.stations[m_chip.cur_station].name));
-                memcpy(m_chip.stations[m_chip.cur_station].text, m_chip.text, sizeof(m_chip.stations[m_chip.cur_station].text));
-            }
-        }
-
-        *delay = 20;
-        break;
-    }
-
-    if (state)
-    {
-        *state = m_chip.state;
-    }
-
-    return 0;
-}
-#endif
 
 int SI4703Init(tuner_t *in_tuner, tuner_seek_threshold_t seek_threshold)
 {

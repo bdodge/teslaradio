@@ -15,6 +15,7 @@ LOG_MODULE_REGISTER(main, LOG_LEVEL_INF);
 #include "settings.h"
 #include "audioin.h"
 #include "si4703.h"
+#include "si473x.h"
 #include "vfs.h"
 
 static uint32_t s_requested_freq;
@@ -25,6 +26,7 @@ int TunerRequestTuneTo(uint32_t freq_kHz)
     return 0;
 }
 
+#if CONFIG_DISPLAY
 static void UpdateDisplay(void)
 {
     //static char rds_name[65];
@@ -146,6 +148,7 @@ static void UpdateDisplay(void)
 #endif
     }
 }
+#endif
 
 int main(void)
 {
@@ -165,7 +168,17 @@ int main(void)
     ret = AudioInit();
     require_noerr(ret, exit);
 
-    ret = TunerInit(SI4703GetRadio(), TUNER_SEEK_BETTER);
+    ret = TunerInit(SI473XGetRadio(), TUNER_SEEK_BETTER);
+    if (ret)
+    {
+        ret = TunerInit(SI4703GetRadio(), TUNER_SEEK_BETTER);
+    }
+
+    if (ret)
+    {
+        LOG_ERR("No radio found");
+    }
+
     require_noerr(ret, exit);
 
 #if CONFIG_BT
@@ -233,11 +246,12 @@ int main(void)
                 TunerTuneTo(s_requested_freq);
                 s_requested_freq = 0;
             }
+#if CONFIG_DISPLAY
             else if (tuner_state == TUNER_TUNED)
             {
                 UpdateDisplay();
             }
-
+#endif
         }
     }
 exit:

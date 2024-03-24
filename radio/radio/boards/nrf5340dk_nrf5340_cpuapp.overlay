@@ -57,6 +57,13 @@
         status = "okay";
     };
 
+    /* SI4732 FM Radio*/
+    si473x: si473x@11 {
+        compatible = "i2c-device";
+        reg = <0x11>;
+        status = "okay";
+    };
+
 	/* SSD1306 OLED display */
     display: ssd1306@3c {
         compatible = "solomon,ssd1306fb";
@@ -85,7 +92,8 @@ i2s_rx: &i2s0 {
 	pinctrl-0 = <&i2s0_default>;
 	pinctrl-1 = <&i2s0_sleep>;
 	pinctrl-names = "default", "sleep";
-	clock-source = "PCLK32M";
+	clock-source = "ACLK";
+//	clock-source = "PCLK32M";
 };
 
 / {
@@ -93,6 +101,10 @@ i2s_rx: &i2s0 {
         compatible = "gpio-leds";
 
         gpio_si4703_rst: gpio_si4703_rst {
+            gpios = <&gpio1 15 (GPIO_ACTIVE_LOW | GPIO_PUSH_PULL)>;
+            status = "okay";
+        };
+        gpio_si473x_rst: gpio_si473x_rst {
             gpios = <&gpio1 15 (GPIO_ACTIVE_LOW | GPIO_PUSH_PULL)>;
             status = "okay";
         };

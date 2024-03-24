@@ -79,7 +79,7 @@ static int disk_ram_access_read(struct disk_info *disk, uint8_t *buff,
     {
         LOG_ERR("sector %u isn't in our fs", sector);
         memset(buff, 0, count * VFAT_SECTOR_SIZE);
-        return 0;
+        return -1;
     }
 
     //LOG_INF("read %u %d", sector, count);
@@ -260,7 +260,7 @@ static int disk_ram_access_read(struct disk_info *disk, uint8_t *buff,
                     srcdex = 0;
                     sample_bytes = 0;
                     samples = NULL;
-                    timer = 500;
+                    timer = 1500;
 
                     while (timer > 0)
                     {
@@ -272,8 +272,8 @@ static int disk_ram_access_read(struct disk_info *disk, uint8_t *buff,
                             break;
                         }
 
-                        timer-= 4;
-                        k_msleep(4);
+                        timer-= 10;
+                        k_msleep(10);
                     }
 
                     if (sample_bytes > 0)
@@ -556,7 +556,7 @@ void vdisk_setup_dir(struct station_info *stations, uint32_t num_stations)
                 entry[30] = newlfn[newdex++];
 
                 // replace dir entry
-                memcpy((uint8_t*)section_sectors[SECTION_ROOTDIR].sectors[0] + ent_off, entry, 32);
+                //memcpy((uint8_t*)section_sectors[SECTION_ROOTDIR].sectors[0] + ent_off, entry, 32);
             }
         }
         else
@@ -587,7 +587,7 @@ void vdisk_setup_dir(struct station_info *stations, uint32_t num_stations)
             size += (uint32_t)entry[SIZE_OFF + 2] << 16;
             size += (uint32_t)entry[SIZE_OFF + 3] << 24;
 
-            LOG_INF("File %d of %08X at %08X =%s= =%s=", filenum, size, cluster, sfn, lfnbuf);
+            LOG_DBG("File %d of %08X at %08X =%s= =%s=", filenum, size, cluster, sfn, lfnbuf);
 
             if (filenum == 0)
             {
@@ -616,7 +616,7 @@ void vdisk_setup_dir(struct station_info *stations, uint32_t num_stations)
                 }
 
                 // replace dir entry
-                memcpy((uint8_t*)section_sectors[SECTION_ROOTDIR].sectors[0] + ent_off, entry, 32);
+                //memcpy((uint8_t*)section_sectors[SECTION_ROOTDIR].sectors[0] + ent_off, entry, 32);
             }
 
             // remember first sector of each file entry

@@ -191,7 +191,7 @@ static int TunerDiscoSlice(uint32_t *out_delay, bool *complete)
     {
         // seek up to next chan
         //
-        ret = m_tuner.radio->seek(m_tuner.radio, true, false);
+        ret = m_tuner.radio->seek(m_tuner.radio, true, true);
         if (ret)
         {
             LOG_INF("seek fail, recheck from %u", m_tuner.disco_chan);
@@ -591,6 +591,17 @@ static int _CommandPrint(const struct shell *s, size_t argc, char **argv)
                 m_tuner.stations[station].name,
                 m_tuner.stations[station].text);
     }
+
+    uint32_t freq_kHz;
+    uint8_t rssi;
+    bool stereo;
+    int ret;
+
+    ret = m_tuner.radio->get_tune(m_tuner.radio, &freq_kHz);
+    ret = m_tuner.radio->get_rssi(m_tuner.radio, &rssi, &stereo, NULL);
+
+    shell_print(s, "Current tune: %5.1f  rssi: %u %s",
+            (float)freq_kHz / 1000.0, rssi, stereo ? "st" : "mono");
 
     return 0;
 }

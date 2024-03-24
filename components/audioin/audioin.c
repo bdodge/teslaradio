@@ -20,26 +20,42 @@ LOG_MODULE_REGISTER(audioin, LOG_LEVEL_INF);
 #define I2S_RX_NODE DT_NODELABEL(i2s_rx)
 
 // Frequency source of audio clock (xtal 32MHz)
-#define AUDIO_CLOCK             (32000000)
+//#define AUDIO_CLOCK             (32000000)
+// PLL
+#define AUDIO_CLOCK             (11289600)
+
+#define AUDIO_CHANNELS              (2)
 
 // bytes per sample
-#define AUDIO_IN_BYTES_PER_SAMPLE  (4) /* 24 bit stereo from codec */
-#define AUDIO_OUT_BYTES_PER_SAMPLE (2) /* 16 bit stereo to reader */
+#define AUDIO_IN_BYTES_PER_SAMPLE   (4) /* 24 bit stereo from codec, 4 bytes per channel */
+#define AUDIO_OUT_BYTES_PER_SAMPLE  (2) /* 16 bit stereo to reader, 2 bytes per channel */
 
-// sector size we want
-#define AUDIO_SECTOR_SIZE       (512)
+// sector size we want (in bytes)
+#define AUDIO_SECTOR_SIZE           (512)
+
+// at 4 bytes per stereo sample we fit 128 samples per sector
+//
+#define AUDIO_SAMPLES_PER_BLOCK (AUDIO_SECTOR_SIZE / (AUDIO_OUT_BYTES_PER_SAMPLE * AUDIO_CHANNELS))
 
 // how many bytes per sample block.. easiest to provide one sectors worth per
-#define AUDIO_BLOCK_SIZE        (AUDIO_SECTOR_SIZE * AUDIO_IN_BYTES_PER_SAMPLE / AUDIO_OUT_BYTES_PER_SAMPLE)
+#define AUDIO_IN_BLOCK_SIZE     (AUDIO_SAMPLES_PER_BLOCK * AUDIO_IN_BYTES_PER_SAMPLE * AUDIO_CHANNELS)
+#define AUDIO_OUT_BLOCK_SIZE    (AUDIO_SAMPLES_PER_BLOCK * AUDIO_OUT_BYTES_PER_SAMPLE * AUDIO_CHANNELS)
 
-// blocks in flight total, need at least 3 for proper operation
-#define AUDIO_BLOCK_COUNT       (6)
+// input blocks in flight total, need at least 3 for proper operation
+#define AUDIO_IN_BLOCK_COUNT    (4)
 
-// size of output ring buffer (bytes)
-#define AUDIO_RING_COUNT        (2 * AUDIO_SECTOR_SIZE)
+// output blocks in flight total,
+#define AUDIO_OUT_BLOCK_COUNT   (6)
+#define AUDIO_RING_SIZE         (AUDIO_OUT_BLOCK_COUNT)
 
-// I2S interface requires a slab alloctor for audio blocks
-K_MEM_SLAB_DEFINE_STATIC(mem_slab, AUDIO_BLOCK_SIZE, AUDIO_BLOCK_COUNT, 4);
+// I2S interface requires a slab alloctor for audio blocks.  This block
+// allocator fills up at the audio rate we set of about 47kHz
+//
+K_MEM_SLAB_DEFINE_STATIC(in_slab, AUDIO_IN_BLOCK_SIZE, AUDIO_IN_BLOCK_COUNT, 4);
+
+// we also use a slab allocator for output blocks
+//
+K_MEM_SLAB_DEFINE_STATIC(out_slab, AUDIO_OUT_BLOCK_SIZE, AUDIO_OUT_BLOCK_COUNT, 4);
 
 static struct playback_ctx
 {
@@ -57,10 +73,22 @@ static struct playback_ctx
     uint64_t            start_time_ms;
     uint64_t            duration_ms;
 
-    uint32_t            data[AUDIO_RING_COUNT];
+    uint32_t            drop_rate;
+    uint32_t            drop_frac;
+    uint64_t            last_read;
+    uint64_t            last_warn;
+
+    // the head/tail/count all represent whole blocks
+    // of output-format data
+    //
+    uint32_t            *outring[AUDIO_RING_SIZE];
     int                 head;
     int                 tail;
     int                 count;
+
+    // the sample count refers to the current (head) block
+    //
+    int                 samples;
 }
 m_playback_state;
 
@@ -89,6 +117,7 @@ static int _SetupAudioClock(uint32_t sample_rate)
 {
     int ret = -EINVAL;
     NRF_I2S_Type *p_reg = NRF_I2S0;
+    NRF_CLOCK_Type *p_clks = NRF_CLOCK_S;
     uint32_t desired_mclk;
     uint32_t actual_freq;
     uint32_t min_diff;
@@ -107,42 +136,55 @@ static int _SetupAudioClock(uint32_t sample_rate)
     // See pages 230-246 of nRF5340_OPS_v-0.5.pdf
 
     // find divisor value closest to desired mclk frequency
-    min_dex = 0;
-    min_diff = AUDIO_CLOCK - desired_mclk;
-
-    for (int i = 1; i < ARRAY_SIZE(_s_clk_div); i++)
+    if (desired_mclk != AUDIO_CLOCK)
     {
-        actual_freq = AUDIO_CLOCK / _s_clk_div[i].divisor;
-        if (actual_freq > desired_mclk)
+        min_dex = 0;
+        min_diff = AUDIO_CLOCK - desired_mclk;
+
+        for (int i = 1; i < ARRAY_SIZE(_s_clk_div); i++)
         {
-            diff = actual_freq - desired_mclk;
-        }
-        else
-        {
-            diff = desired_mclk - actual_freq;
+            actual_freq = AUDIO_CLOCK / _s_clk_div[i].divisor;
+            if (actual_freq > desired_mclk)
+            {
+                diff = actual_freq - desired_mclk;
+            }
+            else
+            {
+                diff = desired_mclk - actual_freq;
+            }
+
+            if (diff < min_diff)
+            {
+                min_diff = diff;
+                min_dex = i;
+            }
         }
 
-        if (diff < min_diff)
-        {
-            min_diff = diff;
-            min_dex = i;
-        }
-    }
-
-    //
-    LOG_INF("freq_config=%08X actual_freq=%u",
-            _s_clk_div[min_dex].mckfreq,
-            AUDIO_CLOCK / _s_clk_div[min_dex].divisor);
-    //
-    if (min_dex == 0)
-    {
-        p_reg->CONFIG.CLKCONFIG |= ((uint32_t) 1 << I2S_CONFIG_CLKCONFIG_BYPASS_Pos);
-    }
-    else
-    {
+        //
+        LOG_INF("freq_config=%08X actual_freq=%u",
+                _s_clk_div[min_dex].mckfreq,
+                AUDIO_CLOCK / _s_clk_div[min_dex].divisor);
+        //
         p_reg->CONFIG.CLKCONFIG &= ~((uint32_t) 1 << I2S_CONFIG_CLKCONFIG_BYPASS_Pos);
         p_reg->CONFIG.MCKFREQ = _s_clk_div[min_dex].mckfreq;
         p_reg->CONFIG.RATIO = I2S_CONFIG_RATIO_RATIO_256X;  // Div by 256
+    }
+    else
+    {
+        //
+        LOG_INF("freq_config actual_freq=%u %u", AUDIO_CLOCK, AUDIO_CLOCK / 256);
+        LOG_INF("HFCLKAUDIO = %08X\n", p_clks->HFCLKAUDIO.FREQUENCY);
+        //
+        p_reg->CONFIG.CLKCONFIG |= ((uint32_t) 1 << I2S_CONFIG_CLKCONFIG_BYPASS_Pos);
+        p_reg->CONFIG.MCKFREQ = 0;
+        p_reg->CONFIG.RATIO = I2S_CONFIG_RATIO_RATIO_256X;  // Div by 256
+
+        // hack adjust audio clock to be faster than 44100.  I found with the 5340 the
+        // audio pll can only do 43800kHz or 47500kHz and its a lot easier to drop
+        // oversamples vs invent undersamples
+        //
+        p_clks->HFCLKAUDIO.FREQUENCY = 36000;
+        LOG_INF("new HFCLKAUDIO = %08X\n", p_clks->HFCLKAUDIO.FREQUENCY);
     }
 
     p_reg->CONFIG.MCKEN = 1;
@@ -158,7 +200,10 @@ static int _ReceiveBlock(struct playback_ctx *playback)
     void *mem_block;
     uint32_t *src;
     uint32_t block_size;
+    uint64_t now;
     int count;
+
+    now = k_uptime_get();
 
     ret = i2s_read(playback->i2s_dev, &mem_block, &block_size);
 
@@ -171,22 +216,36 @@ static int _ReceiveBlock(struct playback_ctx *playback)
     {
         k_mutex_lock(&playback->block_lock, K_FOREVER);
 
-        verify(block_size == AUDIO_BLOCK_SIZE);
+        verify(block_size == AUDIO_IN_BLOCK_SIZE);
 
-        if (playback->count >= (AUDIO_RING_COUNT - (AUDIO_SECTOR_SIZE / 4)))
+        playback->last_read = k_uptime_get();
+
+        // calculate a drop rate based on the fullness of the input ring
+        // and the output ring to adust for sample rate differences
+        //
+        // drop rate ranges from 0 to 65536, where 65536 means drop all samples
+        // (and happens when nothing is draining the audio ring).
+        //
+        // we only change the drop rate a bit each call to dampen changes
+        // and we aim to keep this output ring about 1/2 full at all times
+        // and a stable drop-rate which is the rate-adaptation ration
+        //
+        uint32_t drop_rate = 65536 * playback->count / (2 * AUDIO_RING_SIZE);
+        uint32_t new_drop = (drop_rate + playback->drop_rate) / 2;
+
+        new_drop = 0;
+        if (new_drop != playback->drop_rate)
         {
-            // overflow, drop the oldest chunk
-            playback->count-= (AUDIO_SECTOR_SIZE / 4);
-            playback->tail+= (AUDIO_SECTOR_SIZE / 4);
-            playback->tail%= AUDIO_RING_COUNT;
+            //LOG_INF("new drop %f, was %f\n", new_drop / 65536.0, playback->drop_rate / 65536.0);
+            playback->drop_rate = new_drop;
         }
+
         // copy raw data, dropping some bits.  the format is 24 bit data
-        // padded into 32 bits of data right justified and sign-extended
+        // padded into a2 bits of data right justified and sign-extended
         //
         src = (uint32_t*)mem_block;
         for (count = 0; count < AUDIO_SECTOR_SIZE; count += 4, src+= 2)
         {
-#if 1
             // scale preserving sign
             int32_t left  = (int32_t)src[0];
             int32_t right = (int32_t)src[1];
@@ -194,23 +253,54 @@ static int _ReceiveBlock(struct playback_ctx *playback)
             left <<= 8;
             right >>= 8;
 
-            playback->data[playback->head] = (uint32_t)(left & 0xFFFF0000) | (uint32_t)(right & 0xFFFF);
-#else
-            // take upper 16 bits of each channel
-            playback->data[playback->head] = (src[0] & 0xFFFF0000) | (src[1] >> 16);
-#endif
-            playback->count++;
-            playback->head++;
-            if (playback->head >= AUDIO_RING_COUNT)
+            playback->drop_frac += playback->drop_rate;
+
+            if (playback->drop_frac < 65536)
             {
-                playback->head = 0;
+                (playback->outring[playback->head])[playback->samples] =
+                        (uint32_t)(left & 0xFFFF0000) | (uint32_t)(right & 0xFFFF);
+                playback->samples++;
+
+                if (playback->samples >= AUDIO_SAMPLES_PER_BLOCK)
+                {
+                    if (playback->count >= AUDIO_OUT_BLOCK_COUNT)
+                    {
+                        // overflow, drop it
+                        playback->samples--;
+
+                        if ((now - playback->last_read) < 1000)
+                        {
+                            if ((now - playback->last_warn) > 2000)
+                            {
+                                LOG_WRN("overflow out ring\n");
+                                playback->last_warn = now;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // put output block on output ring
+                        //
+                        playback->samples = 0;
+                        playback->count++;
+                        playback->head++;
+                        if (playback->head >= AUDIO_OUT_BLOCK_COUNT)
+                        {
+                            playback->head = 0;
+                        }
+                    }
+                }
+            }
+            else
+            {
+                playback->drop_frac -= 65536;
             }
         }
 
         k_mutex_unlock(&playback->block_lock);
 
         playback->rx_blocks++;
-        k_mem_slab_free(&mem_slab, mem_block);
+        k_mem_slab_free(&in_slab, mem_block);
     }
 
     return ret;
@@ -227,6 +317,13 @@ static void _AudioTaskMain(void * parameter)
     {
         LOG_ERR("i2s not ready");
     }
+
+    for (int block = 0; block < AUDIO_OUT_BLOCK_COUNT; block++)
+    {
+        k_mem_slab_alloc(&out_slab, (void *)&m_playback_state.outring[block], K_NO_WAIT);
+    }
+
+    m_playback_state.samples = 0;
 
     k_sem_init(&m_playback_state.start_sem, 0, 1);
 
@@ -246,7 +343,7 @@ static void _AudioTaskMain(void * parameter)
             codec_cfg.dai_cfg.i2s.options           = I2S_OPT_BIT_CLK_SLAVE | I2S_OPT_FRAME_CLK_SLAVE;
            // codec_cfg.dai_cfg.i2s.options           = I2S_OPT_BIT_CLK_MASTER | I2S_OPT_FRAME_CLK_MASTER;
             codec_cfg.dai_cfg.i2s.frame_clk_freq    = m_playback_state.sample_rate;
-            codec_cfg.dai_cfg.i2s.mem_slab          = &mem_slab;
+            codec_cfg.dai_cfg.i2s.mem_slab          = &in_slab;
             codec_cfg.dai_cfg.i2s.block_size        = m_playback_state.block_size;
             codec_cfg.dai_cfg.i2s.timeout           = 1000;
 
@@ -272,6 +369,9 @@ static void _AudioTaskMain(void * parameter)
                 goto failed_start;
             }
 
+            m_playback_state.drop_frac = 0;
+            m_playback_state.drop_rate = 0;
+            m_playback_state.last_read = 0;
             m_playback_state.active = true;
 
             // The Zephyr I2S interface is too "smart" about picking an MCLK to match
@@ -304,7 +404,7 @@ failed_start:
 }
 
 #define AUDIO_STACKSIZE (1024)
-#define AUDIO_PRIORITY  (-4)
+#define AUDIO_PRIORITY  (-6)
 
 K_THREAD_DEFINE(s_audio_thread_id, AUDIO_STACKSIZE, _AudioTaskMain, NULL, NULL, NULL, AUDIO_PRIORITY, 0, 0);
 
@@ -315,16 +415,22 @@ int AudioGetSamples(void **out_sample_block, size_t *out_sample_bytes)
     *out_sample_block = NULL;
     *out_sample_bytes = 0;
 
-    if (m_playback_state.count >= AUDIO_SECTOR_SIZE)
+    m_playback_state.last_read = k_uptime_get();
+
+    if (m_playback_state.count > 0)
     {
         k_mutex_lock(&m_playback_state.block_lock, K_FOREVER);
 
-        *out_sample_block = m_playback_state.data + m_playback_state.tail;
+        *out_sample_block = m_playback_state.outring[m_playback_state.tail];
         *out_sample_bytes = AUDIO_SECTOR_SIZE;
 
-        m_playback_state.count-= (AUDIO_SECTOR_SIZE / 4);
-        m_playback_state.tail+= (AUDIO_SECTOR_SIZE / 4);
-        m_playback_state.tail%= AUDIO_RING_COUNT;
+        m_playback_state.count--;
+        m_playback_state.tail++;
+        if (m_playback_state.tail >= AUDIO_RING_SIZE)
+        {
+            m_playback_state.tail = 0;
+        }
+
         k_mutex_unlock(&m_playback_state.block_lock);
         ret = 0;
     }
@@ -342,7 +448,7 @@ int AudioStart(void)
     m_playback_state.channels           = 2;
     m_playback_state.bytes_per_sample   = 24 / 8;
     m_playback_state.sample_rate        = 44100;
-    m_playback_state.block_size         = AUDIO_BLOCK_SIZE;
+    m_playback_state.block_size         = AUDIO_IN_BLOCK_SIZE;
 
     m_playback_state.rx_blocks          = 0;
     m_playback_state.duration_ms        = 0;
@@ -376,7 +482,7 @@ static void _CmdAudioTest(const struct shell *shell, size_t argc, char **argv)
     m_playback_state.channels           = 2;
     m_playback_state.bytes_per_sample   = sample_bits / 8;
     m_playback_state.sample_rate        = sample_rate;
-    m_playback_state.block_size         = AUDIO_BLOCK_SIZE;
+    m_playback_state.block_size         = AUDIO_IN_BLOCK_SIZE;
 
     m_playback_state.rx_blocks          = 0;
     m_playback_state.duration_ms        = 2000;
