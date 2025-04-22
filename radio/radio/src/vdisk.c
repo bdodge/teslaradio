@@ -30,16 +30,34 @@ static uint8_t s_wav_header_live[] = {
   0x02, 0x00,               // channels (2)
   0x44, 0xac, 0x00, 0x00,   // sample rate 44100
   0x10, 0xb1, 0x02, 0x00,   // bitrate 176400
-  0x04, 0x00,               // bytes for frame
+  0x04, 0x00,               // 4 bytes for frame
   0x10, 0x00,               // 16 bits per sample
   0x64, 0x61, 0x74, 0x61,   // "data"
   0x00, 0x00, 0x00, 0x80    // data section byte length - 2Gb
+};
+
+static uint8_t s_wav_header_dead[] = {
+  0x52, 0x49, 0x46, 0x46,   // "RIFF"
+  0x8c, 0x64, 0x01, 0x00,   // file size
+  0x57, 0x41, 0x56, 0x45,   // "WAVE"
+  0x66, 0x6d, 0x74, 0x20,   // "fmt "
+  0x10, 0x00, 0x00, 0x00,   // fmt section byte length
+  0x01, 0x00,               // PCM format (1)
+  0x01, 0x00,               // channels (1)
+  0xf1, 0x56, 0x00, 0x00,   // sample rate 22257
+  0xf1, 0x56, 0x00, 0x00,   // bitrate - same
+  0x01, 0x00,               // 1 byte per frame
+  0x08, 0x00,               // 8 bits per sample
+  0x64, 0x61, 0x74, 0x61,   // "data"
+  0x00, 0x00, 0x00, 0x80    // data section length - 2Gb
 };
 
 #define WAV_HEADER_SIZE (sizeof(s_wav_header_live))
 
 static uint32_t s_start_sectors[VFAT_ROOT_DIR_COUNT];
 static uint32_t s_start_stations[VFAT_ROOT_DIR_COUNT];
+static uint32_t s_num_stations;
+static bool s_have_tuner;
 
 static int disk_ram_access_status(struct disk_info *disk)
 {
@@ -79,7 +97,7 @@ static int disk_ram_access_read(struct disk_info *disk, uint8_t *buff,
     {
         LOG_ERR("sector %u isn't in our fs", sector);
         memset(buff, 0, count * VFAT_SECTOR_SIZE);
-        return -1;
+        return 0;
     }
 
     //LOG_INF("read %u %d", sector, count);
@@ -118,13 +136,17 @@ static int disk_ram_access_read(struct disk_info *disk, uint8_t *buff,
                 {
                     int filedex = 1;
 
+                    // put the EOC mark properly on the first file
+                    //
+                    fatptr[2] = 0x0FFFFFFF;
+
                     // This is where the magic happens
                     //
                     // in sector 512 of the FAT, the first three entries are the last two cluster ptrs of
                     // our first 2Gb file and its EOC.  That means all our other files (of 1024 bytes each)
                     // should have one cluster entry and one EOC starting at the third entry.
                     //
-                    // i change the cluster ptr to point at the second cluster of the first file
+                    // I change the cluster ptr to point at the second cluster of the first file
                     // (the first cluster is 3) so that the second cluster of the file points
                     // to sector 64 and so on, just like the first file.
                     //
@@ -132,6 +154,7 @@ static int disk_ram_access_read(struct disk_info *disk, uint8_t *buff,
                     // and we hand-offset the sector numbers by remembering where the file's first
                     // sector is when we parse the root dir.
                     //
+#if 1
                     for (fatdex = 3; fatdex < VFAT_SECTOR_SIZE / 4; fatdex+= 2)
                     {
                         if (filedex < VFAT_ROOT_DIR_COUNT)
@@ -139,9 +162,35 @@ static int disk_ram_access_read(struct disk_info *disk, uint8_t *buff,
                             fatptr[fatdex] = 4;
                             fatptr[fatdex + 1] = 0x0FFFFFFF; // EOC for safety
                         }
+                        else
+                        {
+                            fatptr[fatdex] = 0;
+                            fatptr[fatdex + 1] = 0;
+                        }
 
                         filedex++;
                     }
+#else
+                    // this makes each file look like it takes one cluster
+                    // like the original generate fat looked like
+                    //
+                    for (fatdex = 3; fatdex < VFAT_SECTOR_SIZE / 4; fatdex+= 2)
+                    {
+                        if (filedex < VFAT_ROOT_DIR_COUNT)
+                        {
+                            fatptr[fatdex] = cluster++;
+                            fatptr[fatdex + 1] = 0x0FFFFFFF; // EOC for safety
+                            cluster++;
+                        }
+                        else
+                        {
+                            fatptr[fatdex] = 0;
+                            fatptr[fatdex + 1] = 0;
+                        }
+
+                        filedex++;
+                    }
+#endif
                 }
             }
             else
@@ -180,10 +229,13 @@ static int disk_ram_access_read(struct disk_info *disk, uint8_t *buff,
                    TunerRequestTuneTo(s_start_stations[ss]);
                 }
 
-                // start i2s stream
-                if (!AudioActive())
+                if (s_have_tuner)
                 {
-                    AudioStart();
+                    // start i2s stream
+                    if (!AudioActive())
+                    {
+                        AudioStart();
+                    }
                 }
 
                 is_start_sector = true;
@@ -217,7 +269,14 @@ static int disk_ram_access_read(struct disk_info *disk, uint8_t *buff,
 
                 is_start_sector = false;
 
-                src_ptr = (uint32_t *)s_wav_header_live;
+                if (s_have_tuner)
+                {
+                    src_ptr = (uint32_t *)s_wav_header_live;
+                }
+                else
+                {
+                    src_ptr = (uint32_t *)s_wav_header_dead;
+                }
 
                 // prepend wave header
                 while (dstdex < WAV_HEADER_SIZE / 4)
@@ -556,7 +615,7 @@ void vdisk_setup_dir(struct station_info *stations, uint32_t num_stations)
                 entry[30] = newlfn[newdex++];
 
                 // replace dir entry
-                //memcpy((uint8_t*)section_sectors[SECTION_ROOTDIR].sectors[0] + ent_off, entry, 32);
+                memcpy((uint8_t*)section_sectors[SECTION_ROOTDIR].sectors[0] + ent_off, entry, 32);
             }
         }
         else
@@ -616,7 +675,7 @@ void vdisk_setup_dir(struct station_info *stations, uint32_t num_stations)
                 }
 
                 // replace dir entry
-                //memcpy((uint8_t*)section_sectors[SECTION_ROOTDIR].sectors[0] + ent_off, entry, 32);
+                memcpy((uint8_t*)section_sectors[SECTION_ROOTDIR].sectors[0] + ent_off, entry, 32);
             }
 
             // remember first sector of each file entry
@@ -634,10 +693,11 @@ void vdisk_setup_dir(struct station_info *stations, uint32_t num_stations)
     }
 }
 
-int vdisk_init(struct station_info *stations, uint32_t num_stations)
+int vdisk_init(struct station_info *stations, uint32_t num_stations, bool have_tuner)
 {
     vdisk_setup_dir(stations, num_stations);
-
+    s_have_tuner = have_tuner;
+    s_num_stations = num_stations;
     return disk_access_register(&ram_disk);
 }
 

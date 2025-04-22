@@ -19,6 +19,8 @@ LOG_MODULE_REGISTER(main, LOG_LEVEL_INF);
 #include "vfs.h"
 
 static uint32_t s_requested_freq;
+static bool s_have_display;
+static bool s_have_tuner;
 
 int TunerRequestTuneTo(uint32_t freq_kHz)
 {
@@ -44,6 +46,11 @@ static void UpdateDisplay(void)
     const char *rdst;
 
     int ret;
+
+    if (!s_have_display)
+    {
+        return;
+    }
 
     ret = TunerGetTunedStationFreq(&curfreq);
     ret = TunerGetTunedStationRSSI(&currssi, &curstereo);
@@ -153,6 +160,7 @@ static void UpdateDisplay(void)
 int main(void)
 {
     int ret;
+    struct station_info *station_list;
 
     printk("-- Hello --");
 
@@ -161,10 +169,18 @@ int main(void)
 
     ret = SettingsInit();
     require_noerr(ret, exit);
+
+    s_have_display = false;
 #if CONFIG_DISPLAY
     ret = DisplayInit();
-    require_noerr(ret, exit);
+    if (!ret)
+    {
+        s_have_display = true;
+    }
+//    require_noerr(ret, exit);
 #endif
+    s_have_tuner = false;
+
     ret = AudioInit();
     require_noerr(ret, exit);
 
@@ -178,8 +194,11 @@ int main(void)
     {
         LOG_ERR("No radio found");
     }
-
-    require_noerr(ret, exit);
+    else
+    {
+        s_have_tuner = true;
+    }
+    //require_noerr(ret, exit);
 
 #if CONFIG_BT
     ret = BLEinit(CONFIG_BT_DEVICE_NAME);
@@ -191,6 +210,12 @@ int main(void)
     bool tuner_ready = false;
     tuner_state_t tuner_state;
 
+    if (!s_have_tuner)
+    {
+        ret = vfs_init(station_list, 0, s_have_tuner);
+        setup_vdisk = true;
+    }
+
     while (true)
     {
         min_delay = delay;
@@ -198,61 +223,62 @@ int main(void)
 
 #if CONFIG_BT
         ret = BLEslice(&delay);
-
         if (delay < min_delay)
         {
             min_delay = delay;
         }
 #endif
-        ret = TunerSlice(&delay, &tuner_state);
-
-        if (delay < min_delay)
+        if (s_have_tuner)
         {
-            min_delay = delay;
+            ret = TunerSlice(&delay, &tuner_state);
+
+            if (delay < min_delay)
+            {
+                min_delay = delay;
+            }
+
+            tuner_ready = tuner_state == TUNER_READY || tuner_state == TUNER_TUNED;
+
+            if (tuner_ready && !got_stations)
+            {
+                got_stations = true;
+
+                TunerDiscoverStations();
+            }
+            else if (tuner_ready && got_stations && !setup_vdisk)
+            {
+                uint32_t num_stations;
+
+                ret = TunerGetStations(&station_list, &num_stations);
+                if (!ret)
+                {
+                    setup_vdisk = true;
+
+                    ret = vfs_init(station_list, num_stations, s_have_tuner);
+                    if (ret)
+                    {
+                        break;
+                    }
+                }
+            }
+            else if (tuner_ready)
+            {
+                if (s_requested_freq != 0)
+                {
+                    LOG_INF("TUNE --------- Requested freg %u", s_requested_freq);
+                    TunerTuneTo(s_requested_freq);
+                    s_requested_freq = 0;
+                }
+#if CONFIG_DISPLAY
+                else if (s_have_display && tuner_state == TUNER_TUNED)
+                {
+                    UpdateDisplay();
+                }
+#endif
+            }
         }
 
         k_msleep(min_delay);
-
-        tuner_ready = tuner_state == TUNER_READY || tuner_state == TUNER_TUNED;
-
-        if (tuner_ready && !got_stations)
-        {
-            got_stations = true;
-
-            TunerDiscoverStations();
-        }
-        else if (tuner_ready && got_stations && !setup_vdisk)
-        {
-            struct station_info *station_list;
-            uint32_t num_stations;
-
-            ret = TunerGetStations(&station_list, &num_stations);
-            if (!ret)
-            {
-                setup_vdisk = true;
-
-                ret = vfs_init(station_list, num_stations);
-                if (ret)
-                {
-                    break;
-                }
-            }
-        }
-        else if (tuner_ready)
-        {
-            if (s_requested_freq != 0)
-            {
-                LOG_INF("TUNE --------- Requested freg %u", s_requested_freq);
-                TunerTuneTo(s_requested_freq);
-                s_requested_freq = 0;
-            }
-#if CONFIG_DISPLAY
-            else if (tuner_state == TUNER_TUNED)
-            {
-                UpdateDisplay();
-            }
-#endif
-        }
     }
 exit:
     while (true)
