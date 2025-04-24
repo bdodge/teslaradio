@@ -18,5 +18,5 @@ int AudioGetSamples(void **out_sample_block, size_t *out_sample_bytes);
 bool AudioActive(void);
 int AudioStart(void);
 int AudioStop(void);
-int AudioInit(void);
+int AudioInit(bool supply_clock);
 

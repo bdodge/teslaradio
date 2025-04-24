@@ -5,18 +5,44 @@
 #include "ff.h"
 #include "hacksect.h"
 
-#define NUM_ROOT_FILES	32
-#define FILE_NAME_MAX	26
+#define NUM_ROOT_FILES_MAX	32
+#define FILE_NAME_MAX		26
 
+// Create a "C" header file that describes a FAT32 file system
+// with a fixed directory of N files, where N defaults to 1
+//
 int main(int argc, char **argv)
 {
 	int ret;
+	int num_root_files;
+	char *root_file;
+	int root_file_name_length;
 	MKFS_PARM mkopts;
 
+	if (argc < 2)
+	{
+		fprintf(stderr, "Usage %s <root filename>  OR  %s <number of root files>\n",
+				*argv, *argv);
+		return -1;
+	}
+
+	argv++;
+	if (*argv[0] >= '0' && *argv[0] <= '9')
+	{
+		num_root_files = strtoul(*argv, NULL, 0);
+		root_file = "";
+	}
+	else
+	{
+		num_root_files = 1;
+		root_file = *argv;
+	}
+	// Build a FAT32 file system
+	//
 	mkopts.fmt = FM_FAT32; /* FM_EXFAT;  */
 	mkopts.n_fat = 1;
 	mkopts.align = 1;
-	mkopts.n_root = NUM_ROOT_FILES;
+	mkopts.n_root = num_root_files;
 	mkopts.au_size = 0;
 
 	do
@@ -37,26 +63,33 @@ int main(int argc, char **argv)
 			break;
 		}
 
-
 		FIL file;
 		char fxbuf[100];
 		char fname[128];
 
-		for (int f = 0; f < NUM_ROOT_FILES; f++)
+		for (int f = 0; f < num_root_files; f++)
 		{
 			memset(&file, 0, sizeof(file));
 
-			int totlen = 0;
-			int len;
-
-			while (totlen < (FILE_NAME_MAX - 8))
+			if (num_root_files > 1)
 			{
-				len = snprintf(fxbuf + totlen, sizeof(fxbuf) - totlen, "%02d", f);
-				totlen += len;
+				int len;
+				int totlen = 0;
+
+				while (totlen < (FILE_NAME_MAX - 8))
+				{
+					len = snprintf(fxbuf + totlen, sizeof(fxbuf) - totlen, "%02d", f);
+					totlen += len;
+				}
+
+				fxbuf[FILE_NAME_MAX - 8] = '\0';
+				root_file_name_length = snprintf(fname, sizeof(fname), "0:/file%s.wav", fxbuf);
+			}
+			else
+			{
+				root_file_name_length = snprintf(fname, sizeof(fname), "0:/%s", root_file);
 			}
 
-			fxbuf[FILE_NAME_MAX - 8] = '\0';
-			snprintf(fname, sizeof(fname), "0:/file%s.wav", fxbuf);
 			ret = f_open(&file, fname, FA_CREATE_NEW | FA_WRITE);
 			printf("f_open%d %d\n", f, ret);
 			if (ret)
@@ -93,7 +126,7 @@ int main(int argc, char **argv)
 			f_close(&file);
 		}
 
-		dump_sections(NUM_ROOT_FILES, FILE_NAME_MAX);
+		dump_sections(num_root_files, root_file_name_length);
 	}
 	while (0);
 

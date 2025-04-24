@@ -59,6 +59,9 @@ K_MEM_SLAB_DEFINE_STATIC(out_slab, AUDIO_OUT_BLOCK_SIZE, AUDIO_OUT_BLOCK_COUNT, 
 
 static struct playback_ctx
 {
+    bool                initialized;
+    bool                supply_clock;
+
     const struct device *i2s_dev;
     struct k_sem        start_sem;
     struct k_mutex      block_lock;
@@ -340,8 +343,14 @@ static void _AudioTaskMain(void * parameter)
             codec_cfg.dai_cfg.i2s.word_size         = m_playback_state.bytes_per_sample * 8;
             codec_cfg.dai_cfg.i2s.channels          = m_playback_state.channels;
             codec_cfg.dai_cfg.i2s.format            = I2S_FMT_DATA_FORMAT_LEFT_JUSTIFIED;
-            codec_cfg.dai_cfg.i2s.options           = I2S_OPT_BIT_CLK_SLAVE | I2S_OPT_FRAME_CLK_SLAVE;
-           // codec_cfg.dai_cfg.i2s.options           = I2S_OPT_BIT_CLK_MASTER | I2S_OPT_FRAME_CLK_MASTER;
+            if (m_playback_state.supply_clock)
+            {
+                codec_cfg.dai_cfg.i2s.options       = I2S_OPT_BIT_CLK_MASTER | I2S_OPT_FRAME_CLK_MASTER;
+            }
+            else
+            {
+                codec_cfg.dai_cfg.i2s.options       = I2S_OPT_BIT_CLK_SLAVE | I2S_OPT_FRAME_CLK_SLAVE;
+            }
             codec_cfg.dai_cfg.i2s.frame_clk_freq    = m_playback_state.sample_rate;
             codec_cfg.dai_cfg.i2s.mem_slab          = &in_slab;
             codec_cfg.dai_cfg.i2s.block_size        = m_playback_state.block_size;
@@ -463,9 +472,14 @@ int AudioStop(void)
     return 0;
 }
 
-int AudioInit(void)
+int AudioInit(bool supply_clock)
 {
-    k_mutex_init(&m_playback_state.block_lock);
+    m_playback_state.supply_clock = supply_clock;
+    if (!m_playback_state.initialized)
+    {
+        k_mutex_init(&m_playback_state.block_lock);
+        m_playback_state.initialized = true;
+    }
     return 0;
 }
 
@@ -502,9 +516,15 @@ static void _CmdAudioStart(const struct shell *shell, size_t argc, char **argv)
     AudioStart();
 }
 
+static void _CmdAudioStop(const struct shell *shell, size_t argc, char **argv)
+{
+    AudioStop();
+}
+
 SHELL_STATIC_SUBCMD_SET_CREATE(m_sub_audio,
     SHELL_CMD_ARG(test,  NULL, "Test audio", _CmdAudioTest, 1, 3),
-    SHELL_CMD(start,  NULL, "Start audio", _CmdAudioStart),
+    SHELL_CMD(start,     NULL, "Start audio", _CmdAudioStart),
+    SHELL_CMD(stop,      NULL, "Stop audio", _CmdAudioStop),
     SHELL_SUBCMD_SET_END
 );
 

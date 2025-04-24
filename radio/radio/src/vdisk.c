@@ -217,21 +217,28 @@ static int disk_ram_access_read(struct disk_info *disk, uint8_t *buff,
         dst_ptr = (uint32_t *)buff;
         dstdex = 0;
 
+        // reading data from the starting sector of (one of) s wav file means
+        // wanting to tune to that station index if there are multiple files
+        //
         for (int ss = 0; ss < VFAT_ROOT_DIR_COUNT; ss++)
         {
             if (sector == s_start_sectors[ss])
             {
-                LOG_INF("data read at sec %u starts wav file index %d", sector, ss);
-
-                // tune to this station
-                if (s_start_stations[ss] != 0)
+                if (VFAT_ROOT_DIR_COUNT > 1)
                 {
-                   TunerRequestTuneTo(s_start_stations[ss]);
-                }
+                    LOG_INF("data read at sec %u starts wav file index %d", sector, ss);
 
-                if (s_have_tuner)
-                {
-                    // start i2s stream
+                    if (s_have_tuner)
+                    {
+                        // tune to this station
+                        if (s_start_stations[ss] != 0)
+                        {
+                           TunerRequestTuneTo(s_start_stations[ss]);
+                        }
+                    }
+
+                    // start i2s stream if not running already
+                    //
                     if (!AudioActive())
                     {
                         AudioStart();
@@ -241,6 +248,7 @@ static int disk_ram_access_read(struct disk_info *disk, uint8_t *buff,
                 is_start_sector = true;
                 break;
             }
+
             if (
                     ss > 0
                 &&  sector > s_start_sectors[ss]
@@ -695,9 +703,17 @@ void vdisk_setup_dir(struct station_info *stations, uint32_t num_stations)
 
 int vdisk_init(struct station_info *stations, uint32_t num_stations, bool have_tuner)
 {
-    vdisk_setup_dir(stations, num_stations);
     s_have_tuner = have_tuner;
     s_num_stations = num_stations;
+
+    if (VFAT_ROOT_DIR_COUNT > 1)
+    {
+        // using one-file-per-tunable-station mode, so list each
+        // available station as its own file
+        //
+        vdisk_setup_dir(stations, num_stations);
+    }
+
     return disk_access_register(&ram_disk);
 }
 

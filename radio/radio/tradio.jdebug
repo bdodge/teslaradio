@@ -22,12 +22,12 @@ void OnProjectLoad (void) {
   //
   // Dialog-generated settings
   //
-  Project.AddPathSubstitute ("/Users/bdodge/teslaradio/radio/radio", "$(ProjectDir)");
-  Project.AddPathSubstitute ("/users/bdodge/teslaradio/radio/radio", "$(ProjectDir)");
   Project.SetDevice ("nRF5340_xxAA_APP");
-  Project.SetHostIF ("USB", "1050046631");
+  Project.SetHostIF ("USB", "1050015260");
   Project.SetTargetIF ("SWD");
   Project.SetTIFSpeed ("4 MHz");
+  Project.AddPathSubstitute ("/Users/bdodge/teslaradio/radio/radio", "$(ProjectDir)");
+  Project.AddPathSubstitute ("/users/bdodge/teslaradio/radio/radio", "$(ProjectDir)");
   Project.AddSvdFile ("$(InstallDir)/Config/CPU/Cortex-M33F.svd");
   Project.SetFlashLoader ("");
   //

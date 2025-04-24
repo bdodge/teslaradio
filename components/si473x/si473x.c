@@ -38,9 +38,14 @@ static struct si473x_device
 }
 m_chip;
 
+static bool s_ignore_i2c = false;
+
 static int si473x_read(struct si473x_device *chip, size_t in_byte_count, uint8_t *out_bytes)
 {
     int ret;
+
+    if (s_ignore_i2c)
+        return 0;
 
     ret = i2c_read_dt(chip->i2c_spec, out_bytes, in_byte_count);
     if (ret)
@@ -90,6 +95,9 @@ static int si473x_write(struct si473x_device *chip, uint8_t *in_bytes, size_t in
 {
     int ret;
 
+    if (s_ignore_i2c)
+        return 0;
+
     ret = i2c_write_dt(chip->i2c_spec, in_bytes, in_count);
     if (ret)
     {
@@ -104,6 +112,9 @@ static int si473x_send_cmd(struct si473x_device *chip, const uint8_t in_cmd, con
 {
     int ret = -EINVAL;
     uint8_t buf[32];
+
+    if (s_ignore_i2c)
+        return 0;
 
     require(in_arg_count < sizeof(buf), exit);
 
@@ -533,8 +544,16 @@ static int si473x_power_up(struct si473x_device *chip)
     uint8_t args[2];
     uint8_t response[16];
 
+    /* ARG1   CTSIEN GPO2OEN  PATCH  XOSCEN  F3 F2 F1 F0 */
+    /*                                      0000 = FM-Rx */
     args[0] = 0xD0;
+
+    /* ARG2 0x00 = RDS only
+     *      0x05 = Analog LOUT/ROUT
+     *      0x0B = Digital Out
+     */
     args[1] = 0x05;
+   // args[1] = 0x0B;
 
     ret = si473x_send_cmd(chip, POWER_UP, 2, args);
     require_noerr(ret, exit);
@@ -631,7 +650,7 @@ static int SI473XGetRDS(
                         const char **out_rds_long
                         )
 {
-    int ret = -EAGAIN;
+    int ret = 0; //-EAGAIN;
 
     if (out_rds_changed)
     {
@@ -859,8 +878,22 @@ static int _CommandRst(const struct shell *s, size_t argc, char **argv)
     return 0;
 }
 
+static int _CommandOn(const struct shell *s, size_t argc, char **argv)
+{
+    si473x_power_up(&m_chip);
+    return 0;
+}
+
+static int _Commandxx(const struct shell *s, size_t argc, char **argv)
+{
+    s_ignore_i2c = !s_ignore_i2c;
+    return 0;
+}
+
 SHELL_STATIC_SUBCMD_SET_CREATE(_sub_si473x_commands,
-       SHELL_CMD(rst,           NULL,  "Reset", _CommandRst),
+       SHELL_CMD(reset,         NULL,  "Reset", _CommandRst),
+       SHELL_CMD(on,            NULL,  "On", _CommandOn),
+       SHELL_CMD(xx,            NULL,  "xx", _Commandxx),
        SHELL_SUBCMD_SET_END );
 
 SHELL_CMD_REGISTER(si473x, &_sub_si473x_commands, "SI473X Tuner commands", NULL);

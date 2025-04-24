@@ -177,13 +177,29 @@ int main(void)
     {
         s_have_display = true;
     }
-//    require_noerr(ret, exit);
 #endif
+    station_list = NULL;
     s_have_tuner = false;
 
-    ret = AudioInit();
+#if CONFIG_473X_DIGITAL
+    // init audio as controller (not controllee) since 473x needs
+    // to be the controllee in digital mode
+    //
+    ret = AudioInit(false);
+#else
+    // be I2S controllee normally
+    //
+    ret = AudioInit(false);
+#endif
     require_noerr(ret, exit);
 
+    // start Audio pipe before starting tuner so mclk is
+    // running for digital mode
+    //
+    AudioStart();
+
+    // bring up i2c tunner, volume set to 0
+    //
     ret = TunerInit(SI473XGetRadio(), TUNER_SEEK_BETTER);
     if (ret)
     {
@@ -196,16 +212,16 @@ int main(void)
     }
     else
     {
+        LOG_INF("Tuner Initialied");
         s_have_tuner = true;
     }
-    //require_noerr(ret, exit);
 
 #if CONFIG_BT
     ret = BLEinit(CONFIG_BT_DEVICE_NAME);
     require_noerr(ret, exit);
 #endif
 
-    bool got_stations = false; // set to false to do a disco on startup
+    bool got_stations = true; // set to false to do a disco on startup
     bool setup_vdisk = false;
     bool tuner_ready = false;
     tuner_state_t tuner_state;
@@ -215,11 +231,18 @@ int main(void)
         ret = vfs_init(station_list, 0, s_have_tuner);
         setup_vdisk = true;
     }
+    else
+    {
+        // using usbms interface, go to near full volume for
+        // best dynamic range of A/D
+        //
+        TunerSetVolume(95);
+    }
 
     while (true)
     {
         min_delay = delay;
-        delay = 2000;
+        delay = 200;
 
 #if CONFIG_BT
         ret = BLEslice(&delay);
@@ -231,7 +254,6 @@ int main(void)
         if (s_have_tuner)
         {
             ret = TunerSlice(&delay, &tuner_state);
-
             if (delay < min_delay)
             {
                 min_delay = delay;
